@@ -39,10 +39,6 @@ class D3LightningModule(pl.LightningModule):
         self.loss_fn = None
         self.sampling_eps = 1e-5
         
-        # Accumulation setup
-        self.accum_iter = 0
-        self.total_loss = 0
-        
     def setup(self, stage: str = None):
         """Setup method called after the model is moved to device."""
         # Initialize graph and noise on the correct device
@@ -60,7 +56,7 @@ class D3LightningModule(pl.LightningModule):
         )
         
     def training_step(self, batch, batch_idx):
-        """Training step with gradient accumulation support."""
+        """Training step - Lightning handles accumulation automatically."""
         # Handle dataset-specific input processing
         if self.dataset_name and self.dataset_name.lower() == 'promoter':
             seq_one_hot = batch[:, :, :4]
@@ -70,27 +66,12 @@ class D3LightningModule(pl.LightningModule):
             # For DeepSTARR and MPRA
             inputs, target = batch
             
-        # Compute loss
+        # Compute loss - Lightning handles accumulation automatically
         loss = self.loss_fn(self.score_model, inputs, target).mean()
-        loss = loss / self.cfg.training.accum
         
-        # Accumulation logic
-        self.accum_iter += 1
-        self.total_loss += loss.detach()
+        # Log loss - Lightning handles synchronization
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
         
-        if self.accum_iter == self.cfg.training.accum:
-            self.accum_iter = 0
-            # Update EMA
-            self.ema.update(self.score_model.parameters())
-            
-            # Log the accumulated loss (detached for logging)
-            accumulated_loss_log = self.total_loss
-            self.log('train_loss', accumulated_loss_log, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
-            self.total_loss = 0
-            
-            # Return the current loss (with gradients) for Lightning to handle backward
-            return loss
-            
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -154,6 +135,12 @@ class D3LightningModule(pl.LightningModule):
                 gradient_clip_val=self.cfg.optim.grad_clip, 
                 gradient_clip_algorithm="norm"
             )
+    
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        """Update EMA after each optimizer step (respects accumulation)."""
+        # EMA update happens after Lightning's automatic gradient accumulation
+        if trainer.global_step > 0:  # Skip first step to avoid issues
+            self.ema.update(self.score_model.parameters())
     
     def load_from_original_checkpoint(self, checkpoint_path: str):
         """Load weights from original D3 .pth checkpoint format."""
@@ -348,10 +335,6 @@ class PromoterD3LightningModule(D3LightningModule):
         self.loss_fn = None
         self.sampling_eps = 1e-5
         
-        # Accumulation setup
-        self.accum_iter = 0
-        self.total_loss = 0
-        
         print("✓ Initialized PromoterD3LightningModule with promoter-specific SEDD")
 
 
@@ -384,10 +367,6 @@ class MPRAD3LightningModule(D3LightningModule):
         self.loss_fn = None
         self.sampling_eps = 1e-5
         
-        # Accumulation setup
-        self.accum_iter = 0
-        self.total_loss = 0
-        
         print("✓ Initialized MPRAD3LightningModule with MPRA-specific SEDD")
 
 
@@ -400,7 +379,7 @@ def create_trainer_from_config(cfg, dataset_name: Optional[str] = None, **traine
         'log_every_n_steps': cfg.training.log_freq,
         'val_check_interval': cfg.training.eval_freq,
         'check_val_every_n_epoch': None,  # Allow step-based validation across epochs
-        'accumulate_grad_batches': cfg.training.accum,
+        'accumulate_grad_batches': cfg.training.accum,  # Lightning handles gradient accumulation
         'precision': 'bf16-mixed',  # Use mixed precision like original
         'gradient_clip_val': cfg.optim.grad_clip if cfg.optim.grad_clip >= 0 else None,
         'enable_checkpointing': True,
