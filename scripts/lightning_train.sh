@@ -1,8 +1,8 @@
 #!/bin/bash
 
 #SBATCH --job-name=d3-dna-diffusion
-#SBATCH --output=d3-dna-diffusion.out
-#SBATCH --error=d3-dna-diffusion.err
+#SBATCH --output=d3-dna-diffusion-sc.out
+#SBATCH --error=d3-dna-diffusion-sc.err
 #SBATCH --time=24:00:00
 #SBATCH --partition=gpuq
 #SBATCH --gres=gpu:h100:2

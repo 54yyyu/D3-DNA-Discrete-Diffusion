@@ -19,6 +19,8 @@ import numpy as np
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+torch.set_float32_matmul_precision('medium')
+
 from scripts.lightning_trainer import (
     D3LightningModule, D3DataModule, create_trainer_from_config,
     create_lightning_module, get_model_class_for_dataset

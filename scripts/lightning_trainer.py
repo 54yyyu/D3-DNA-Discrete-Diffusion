@@ -383,7 +383,7 @@ def create_trainer_from_config(cfg, dataset_name: Optional[str] = None, **traine
         'precision': 'bf16-mixed',  # Use mixed precision like original
         'gradient_clip_val': cfg.optim.grad_clip if cfg.optim.grad_clip >= 0 else None,
         'enable_checkpointing': True,
-        'enable_progress_bar': False, #True
+        'enable_progress_bar': True, #True
         'enable_model_summary': True,
     }
     
