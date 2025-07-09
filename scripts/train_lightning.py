@@ -52,7 +52,7 @@ def setup_logging(cfg, work_dir):
         config_dict = OmegaConf.to_yaml(cfg)
         
         wandb_logger = WandbLogger(
-            entity='54yyyu',
+            entity=cfg.wandb.get('entity', 'alejandraduran-u-cshl'),
             project=cfg.wandb.get('project', 'D3'),
             name=cfg.wandb.get('name', os.path.basename(work_dir)),
             save_dir=work_dir,

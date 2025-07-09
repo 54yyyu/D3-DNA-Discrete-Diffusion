@@ -39,6 +39,10 @@ class D3LightningModule(pl.LightningModule):
         self.loss_fn = None
         self.sampling_eps = 1e-5
         
+        # Accumulation setup
+        self.accum_iter = 0
+        self.total_loss = 0
+        
     def setup(self, stage: str = None):
         """Setup method called after the model is moved to device."""
         # Initialize graph and noise on the correct device
@@ -68,9 +72,26 @@ class D3LightningModule(pl.LightningModule):
             
         # Compute loss - Lightning handles accumulation automatically
         loss = self.loss_fn(self.score_model, inputs, target).mean()
+        loss = loss / self.cfg.training.accum
+        
+        # Accumulate logic
+        self.accum_iter += 1
+        self.total_loss += loss.detach()
+        
+        if self.accum_iter >= self.cfg.training.accum:
+            self.accum_iter = 0
+            # Update EMA
+            self.ema.update(self.score_model.parameters())
+            
+            # Log the accumulated loss (detached for logging)
+            accumulated_loss_log = self.total_loss
+            self.log('train_loss', accumulated_loss_log, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
+            self.total_loss = 0
+            
+            return loss
         
         # Log loss - Lightning handles synchronization
-        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
+        # self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)
         
         return loss
     
@@ -86,19 +107,21 @@ class D3LightningModule(pl.LightningModule):
             inputs, target = batch
             
         # Use EMA weights for validation
-        self.ema.store(self.score_model.parameters())
-        self.ema.copy_to(self.score_model.parameters())
+        # self.ema.store(self.score_model.parameters())
+        # self.ema.copy_to(self.score_model.parameters())
         
         # Setup eval loss function
         eval_loss_fn = losses.get_loss_fn(
             self.noise, self.graph, train=False, sampling_eps=self.sampling_eps
         )
         
+        # Skip EMA weight swapping in distributed training to avoid NCCL issues
+        # Use current model weights for validation - EMA is still maintained for checkpointing
         with torch.no_grad():
             loss = eval_loss_fn(self.score_model, inputs, target).mean()
             
         # Restore original weights
-        self.ema.restore(self.score_model.parameters())
+        # self.ema.restore(self.score_model.parameters())
         
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         return loss
@@ -136,15 +159,19 @@ class D3LightningModule(pl.LightningModule):
                 gradient_clip_algorithm="norm"
             )
     
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        """Update EMA after each optimizer step (respects accumulation)."""
-        # EMA update happens after Lightning's automatic gradient accumulation
-        if trainer.global_step > 0:  # Skip first step to avoid issues
-            self.ema.update(self.score_model.parameters())
+    # def on_train_batch_end(self, outputs, batch, batch_idx):
+    #     """Update EMA after each optimizer step (respects accumulation)."""
+    #     # EMA update happens after Lightning's automatic gradient accumulation
+    #     if self.global_step > 0:  # Skip first step to avoid issues
+    #         self.ema.update(self.score_model.parameters())
     
     def load_from_original_checkpoint(self, checkpoint_path: str):
         """Load weights from original D3 .pth checkpoint format."""
         print(f"Loading original checkpoint from: {checkpoint_path}")
+        
+        # Accumulation setup
+        self.accum_iter = 0
+        self.total_loss = 0
         
         # Load the original checkpoint
         loaded_state = torch.load(checkpoint_path, map_location=self.device)
@@ -251,7 +278,7 @@ class D3DataModule(pl.LightningDataModule):
             num_workers=4,
             pin_memory=True,
             shuffle=True,
-            persistent_workers=True,
+            persistent_workers=True,  # Disable to avoid NCCL conflicts in distributed training
         )
     
     def val_dataloader(self):
@@ -263,7 +290,6 @@ class D3DataModule(pl.LightningDataModule):
             pin_memory=True,
             shuffle=False,
         )
-
 
 # Model Factory Pattern for Dataset-Specific Implementations
 
@@ -367,6 +393,10 @@ class MPRAD3LightningModule(D3LightningModule):
         self.loss_fn = None
         self.sampling_eps = 1e-5
         
+        # Accumulation setup
+        self.accum_iter = 0
+        self.total_loss = 0
+        
         print("✓ Initialized MPRAD3LightningModule with MPRA-specific SEDD")
 
 
@@ -392,7 +422,7 @@ def create_trainer_from_config(cfg, dataset_name: Optional[str] = None, **traine
         default_trainer_args.update({
             'devices': cfg.ngpus,
             'num_nodes': getattr(cfg, 'nnodes', 1),  # Default to 1 node if not specified
-            'strategy': 'ddp_find_unused_parameters_true',  # More robust for cluster environments
+            'strategy': 'ddp_find_unused_parameters_true',  # More stable for parameter sync
             'sync_batchnorm': True,
         })
     else:
