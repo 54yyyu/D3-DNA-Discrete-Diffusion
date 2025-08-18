@@ -948,6 +948,9 @@ def parse_args():
 
 def print_results_summary(evaluation_results: Dict, embedding_results: Optional[Dict] = None, embedding_metric: str = 'cosine', processor=None):
     """Print a summary of evaluation results."""
+    from scipy.stats import pearsonr
+    import numpy as np
+    
     print("\n" + "="*60)
     print("CAGI5 VARIANT EFFECT PREDICTION RESULTS")
     print("="*60)
@@ -956,8 +959,6 @@ def print_results_summary(evaluation_results: Dict, embedding_results: Optional[
         if method_name == 'embedding_method':
             # If we have "all" metrics, show results for each individual metric
             if embedding_metric == 'all' and embedding_results is not None and processor is not None:
-                from scipy.stats import pearsonr
-                import numpy as np
                 
                 metric_names = ['cosine', 'l1', 'l2', 'dot']
                 ground_truth = evaluation_results.get('ground_truth', None)
