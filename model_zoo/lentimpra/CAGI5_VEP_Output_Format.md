@@ -9,7 +9,7 @@ cagi5_vep_results.h5
 ├── metadata/                    # Dataset and processing metadata
 ├── input_data/                  # Original input sequences and metadata
 ├── noise_schedule/              # Diffusion noise schedule information
-├── method_cosine_similarity/    # Cosine similarity prediction results
+├── method_embedding_similarity/ # Embedding similarity prediction results
 ├── method_score_matrix/         # Score matrix prediction results
 └── evaluation_results/          # Evaluation metrics and correlations
 ```
@@ -27,7 +27,7 @@ metadata/
 ├── num_sequences           # Int: Total number of variant sequences processed
 ├── sequence_length         # Int: 230 (CAGI5 sequence length)
 ├── num_noise_steps         # Int: Number of diffusion noise steps
-├── methods_used            # String array: ["cosine_similarity", "score_matrix"]
+├── methods_used            # String array: ["embedding_similarity", "score_matrix"]
 ├── genes                   # String array: ["F9", "LDLR", "PKLR", "SORT1"]
 ├── cell_lines             # String array: ["HepG2", "K562"]
 └── timestamp              # String: ISO timestamp of analysis
@@ -59,21 +59,33 @@ noise_schedule/
 └── default_sigma_idx     # Int: Index of default sigma used (5th to last)
 ```
 
-### 4. `method_cosine_similarity/` Group
-Contains results from the cosine similarity prediction method.
+### 4. `method_embedding_similarity/` Group
+Contains results from the embedding similarity prediction method.
 
 ```
-method_cosine_similarity/
+method_embedding_similarity/
 ├── default_step/
 │   ├── ref_representations    # Shape: (N, hidden_dim) - Ref sequence embeddings
 │   ├── alt_representations    # Shape: (N, hidden_dim) - Alt sequence embeddings  
-│   ├── cosine_scores         # Shape: (N,) - Cosine similarity VEP scores
+│   ├── similarity_scores     # Shape: (N,) - Similarity VEP scores (main metric)
+│   ├── similarity_scores_cosine  # Shape: (N,) - Cosine similarity scores (if --embedding_metric all)
+│   ├── similarity_scores_l1      # Shape: (N,) - L1 distance scores (if --embedding_metric all)
+│   ├── similarity_scores_l2      # Shape: (N,) - L2 distance scores (if --embedding_metric all)
+│   ├── similarity_scores_dot     # Shape: (N,) - Dot product scores (if --embedding_metric all)
+│   ├── metric               # String: Distance metric used ("cosine", "l1", "l2", "dot", or "all")
+│   ├── metric_cosine        # String: "cosine" (if --embedding_metric all)
+│   ├── metric_l1            # String: "l1" (if --embedding_metric all)
+│   ├── metric_l2            # String: "l2" (if --embedding_metric all)
+│   ├── metric_dot           # String: "dot" (if --embedding_metric all)
 │   └── noise_level          # Float: Sigma value used for this step
 └── all_steps/               # Only present if --save_intermediates was used
     ├── step_0/
     │   ├── ref_representations  # Shape: (N, hidden_dim)
     │   ├── alt_representations  # Shape: (N, hidden_dim)
-    │   ├── cosine_scores       # Shape: (N,)
+    │   ├── similarity_scores   # Shape: (N,) - Main metric scores
+    │   ├── similarity_scores_* # Shape: (N,) - Individual metric scores (if all metrics)
+    │   ├── metric              # String: Main metric used
+    │   ├── metric_*            # String: Individual metrics (if all metrics)
     │   └── noise_level        # Float
     ├── step_1/ (same structure)
     └── ... (one group per noise step)
@@ -108,7 +120,7 @@ Contains evaluation metrics comparing predictions to ground truth.
 ```
 evaluation_results/
 ├── overall_metrics/
-│   ├── cosine_method/
+│   ├── embedding_method/
 │   │   ├── pearson_r              # Float: Overall Pearson correlation
 │   │   ├── p_value               # Float: Statistical significance
 │   │   ├── k562_pearson_r        # Float: K562 (PKLR gene) correlation
@@ -116,7 +128,7 @@ evaluation_results/
 │   └── score_matrix_method/ (same structure)
 │
 ├── per_gene_results/
-│   ├── cosine_method/
+│   ├── embedding_method/
 │   │   ├── gene_names            # String array: ["F9", "LDLR", "PKLR", "SORT1"]
 │   │   ├── pearson_correlations  # Shape: (4,) - Per-gene Pearson r values
 │   │   ├── p_values             # Shape: (4,) - Statistical significance
@@ -124,7 +136,7 @@ evaluation_results/
 │   └── score_matrix_method/ (same structure)
 │
 ├── per_cell_line_results/
-│   ├── cosine_method/
+│   ├── embedding_method/
 │   │   ├── cell_line_names       # String array: ["HepG2", "K562"]
 │   │   ├── pearson_correlations  # Shape: (2,) - Per-cell-line Pearson r
 │   │   ├── p_values             # Shape: (2,) - Statistical significance
@@ -132,7 +144,7 @@ evaluation_results/
 │   └── score_matrix_method/ (same structure)
 │
 └── all_steps_metrics/           # Only present if --save_intermediates was used
-    ├── cosine_method/
+    ├── embedding_method/
     │   ├── step_0/
     │   │   ├── noise_level      # Float: Sigma value for this step
     │   │   ├── overall/
@@ -151,6 +163,20 @@ evaluation_results/
     │   └── step_1/, step_2/, ... (one group per noise step)
     └── score_matrix_method/ (same structure)
 ```
+
+## Embedding Similarity Metrics
+
+The embedding method supports four different distance metrics:
+
+- **cosine**: Cosine similarity between embeddings (range: -1 to 1, higher = more similar)
+- **l1**: Negative L1 (Manhattan) distance (range: -∞ to 0, higher = more similar)
+- **l2**: Negative L2 (Euclidean) distance (range: -∞ to 0, higher = more similar)  
+- **dot**: Dot product similarity (range: -∞ to ∞, higher = more similar)
+
+When `--embedding_metric all` is used:
+- All four metrics are computed and saved with suffixes (`similarity_scores_cosine`, etc.)
+- Cosine similarity is used as the primary metric for evaluation (`similarity_scores`)
+- Individual metric identifiers are stored (`metric_cosine`, `metric_l1`, etc.)
 
 ## Data Types and Encoding
 
@@ -174,14 +200,14 @@ with h5py.File('cagi5_vep_results.h5', 'r') as f:
     genes = [g.decode() for g in f['input_data/genes'][:]]
     
     # Get predictions
-    cosine_scores = f['method_cosine_similarity/default_step/cosine_scores'][:]
+    similarity_scores = f['method_embedding_similarity/default_step/similarity_scores'][:]
     score_diffs = f['method_score_matrix/default_step/score_differences'][:]
     
     # Get evaluation results
-    cosine_r = f['evaluation_results/overall_metrics/cosine_method/pearson_r'][()]
+    embedding_r = f['evaluation_results/overall_metrics/embedding_method/pearson_r'][()]
     score_matrix_r = f['evaluation_results/overall_metrics/score_matrix_method/pearson_r'][()]
     
-    print(f"Cosine similarity Pearson r: {cosine_r:.4f}")
+    print(f"Embedding similarity Pearson r: {embedding_r:.4f}")
     print(f"Score matrix Pearson r: {score_matrix_r:.4f}")
 ```
 
@@ -195,7 +221,7 @@ with h5py.File('cagi5_vep_results.h5', 'r') as f:
     noise_levels = []
     correlations = []
     
-    steps_group = f['evaluation_results/all_steps_metrics/cosine_method']
+    steps_group = f['evaluation_results/all_steps_metrics/embedding_method']
     for step_name in sorted(steps_group.keys()):
         noise_level = steps_group[f'{step_name}/noise_level'][()]
         pearson_r = steps_group[f'{step_name}/overall/pearson_r'][()]
@@ -211,9 +237,35 @@ with h5py.File('cagi5_vep_results.h5', 'r') as f:
     plt.show()
 ```
 
+### Comparing All Distance Metrics (if --embedding_metric all was used)
+
+```python
+with h5py.File('cagi5_vep_results.h5', 'r') as f:
+    # Load all metric scores
+    cosine_scores = f['method_embedding_similarity/default_step/similarity_scores_cosine'][:]
+    l1_scores = f['method_embedding_similarity/default_step/similarity_scores_l1'][:]
+    l2_scores = f['method_embedding_similarity/default_step/similarity_scores_l2'][:]
+    dot_scores = f['method_embedding_similarity/default_step/similarity_scores_dot'][:]
+    ground_truth = f['input_data/ground_truth_scores'][:]
+    
+    # Compare correlations
+    from scipy.stats import pearsonr
+    
+    metrics = ['cosine', 'l1', 'l2', 'dot']
+    scores = [cosine_scores, l1_scores, l2_scores, dot_scores]
+    
+    for metric, score_array in zip(metrics, scores):
+        r, p = pearsonr(score_array, ground_truth)
+        print(f"{metric.upper()} Pearson r: {r:.4f} (p={p:.2e})")
+```
+
 ## Command Line Options Affecting Output
 
-- `--method both`: Saves both cosine similarity and score matrix results
+- `--method both`: Saves both embedding similarity and score matrix results
+- `--method embedding`: Saves only embedding similarity results
+- `--embedding_metric cosine|l1|l2|dot|all`: Controls which distance metrics are used for embedding method
+  - Single metrics (cosine, l1, l2, dot): Saves only `similarity_scores` and `metric` fields
+  - `all`: Saves separate `similarity_scores_*` and `metric_*` fields for each metric
 - `--save_intermediates`: Adds `all_steps/` groups with results for every noise step
 - `--samples_per_gene N`: Filters input to N random samples per gene before processing
 - `--steps N`: Controls number of noise steps (affects `noise_schedule/` and `all_steps/` size)

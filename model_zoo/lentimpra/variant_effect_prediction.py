@@ -4,7 +4,7 @@ CAGI5 Variant Effect Prediction Script for LentIMPRA
 
 This script implements variant effect prediction using D3 diffusion models on the CAGI5 dataset.
 It supports two prediction methods:
-1. Cosine similarity of sequence representations
+1. Embedding similarity of sequence representations
 2. Score matrix differences at mutation positions
 
 The script processes H5 sequence data and CSV metadata, generates predictions, and saves
@@ -220,21 +220,23 @@ class CAGI5VEPProcessor:
         
         return sigma_values, default_idx
         
-    def predict_cosine_similarity(self, sigma_values: torch.Tensor, default_sigma_idx: int, 
-                                batch_size: int, save_intermediates: bool = False) -> Dict[str, Any]:
+    def predict_embedding_similarity(self, sigma_values: torch.Tensor, default_sigma_idx: int, 
+                                batch_size: int, save_intermediates: bool = False, 
+                                metric: str = 'cosine') -> Dict[str, Any]:
         """
-        Predict variant effects using cosine similarity of sequence representations.
+        Predict variant effects using embedding similarity of sequence representations.
         
         Args:
             sigma_values: Noise schedule values
             default_sigma_idx: Index of default sigma to use
             batch_size: Batch size for processing
             save_intermediates: Whether to save results for all noise steps
+            metric: Distance metric ('cosine', 'l1', 'l2', 'dot')
             
         Returns:
-            Dictionary containing cosine similarity results
+            Dictionary containing embedding similarity results
         """
-        print("Computing cosine similarity predictions...")
+        print(f"Computing embedding similarity predictions using {metric} metric...")
         
         n_sequences = len(self.ref_sequences)
         
@@ -254,8 +256,9 @@ class CAGI5VEPProcessor:
             step_results = {
                 'ref_representations': [],
                 'alt_representations': [], 
-                'cosine_scores': [],
-                'noise_level': sigma.item()
+                'similarity_scores': [],
+                'noise_level': sigma.item(),
+                'metric': metric
             }
             
             # Process sequences in batches
@@ -288,17 +291,26 @@ class CAGI5VEPProcessor:
                     ref_repr_pooled = ref_repr.mean(dim=1)  # (batch, hidden_dim)
                     alt_repr_pooled = alt_repr.mean(dim=1)  # (batch, hidden_dim)
                     
-                    # Compute cosine similarity
-                    cosine_sim = F.cosine_similarity(ref_repr_pooled, alt_repr_pooled, dim=1)  # (batch,)
+                    # Compute similarity based on metric
+                    if metric == 'cosine':
+                        similarity_scores = F.cosine_similarity(ref_repr_pooled, alt_repr_pooled, dim=1)  # (batch,)
+                    elif metric == 'l1':
+                        similarity_scores = -torch.norm(ref_repr_pooled - alt_repr_pooled, p=1, dim=1)  # (batch,) - negative L1 distance
+                    elif metric == 'l2':
+                        similarity_scores = -torch.norm(ref_repr_pooled - alt_repr_pooled, p=2, dim=1)  # (batch,) - negative L2 distance
+                    elif metric == 'dot':
+                        similarity_scores = torch.sum(ref_repr_pooled * alt_repr_pooled, dim=1)  # (batch,) - dot product
+                    else:
+                        raise ValueError(f"Unsupported metric: {metric}")
                     
                 step_results['ref_representations'].append(ref_repr_pooled.cpu())
                 step_results['alt_representations'].append(alt_repr_pooled.cpu())
-                step_results['cosine_scores'].append(cosine_sim.cpu())
+                step_results['similarity_scores'].append(similarity_scores.cpu())
             
             # Concatenate batch results
             step_results['ref_representations'] = torch.cat(step_results['ref_representations'], dim=0)
             step_results['alt_representations'] = torch.cat(step_results['alt_representations'], dim=0)
-            step_results['cosine_scores'] = torch.cat(step_results['cosine_scores'], dim=0)
+            step_results['similarity_scores'] = torch.cat(step_results['similarity_scores'], dim=0)
             
             # Store results
             if step_idx == default_sigma_idx:
@@ -416,14 +428,14 @@ class CAGI5VEPProcessor:
         
         return results
     
-    def evaluate_predictions(self, cosine_results: Optional[Dict] = None, 
+    def evaluate_predictions(self, embedding_results: Optional[Dict] = None, 
                            score_matrix_results: Optional[Dict] = None, 
                            save_intermediates: bool = False) -> Dict[str, Any]:
         """
         Evaluate predictions against ground truth using Pearson correlation.
         
         Args:
-            cosine_results: Cosine similarity prediction results
+            embedding_results: Embedding similarity prediction results
             score_matrix_results: Score matrix prediction results
             save_intermediates: Whether intermediate steps were saved (affects evaluation scope)
             
@@ -451,12 +463,12 @@ class CAGI5VEPProcessor:
         unique_cell_lines = sorted(self.metadata_df['cell_line'].unique())
         
         # Evaluate each method
-        for method_name, results in [('cosine_method', cosine_results), ('score_matrix_method', score_matrix_results)]:
+        for method_name, results in [('embedding_method', embedding_results), ('score_matrix_method', score_matrix_results)]:
             if results is None:
                 continue
                 
             # Get predictions from default step
-            predictions = results['default_step']['cosine_scores'] if method_name == 'cosine_method' else results['default_step']['score_differences']
+            predictions = results['default_step']['similarity_scores'] if method_name == 'embedding_method' else results['default_step']['score_differences']
             
             # Overall correlation
             overall_r, overall_p = pearsonr(predictions.numpy(), ground_truth.numpy())
@@ -515,7 +527,7 @@ class CAGI5VEPProcessor:
         
         # If save_intermediates, evaluate all intermediate steps
         if save_intermediates:
-            self._evaluate_all_steps(cosine_results, score_matrix_results, evaluation_results, ground_truth, genes, cell_lines, unique_genes, unique_cell_lines)
+            self._evaluate_all_steps(embedding_results, score_matrix_results, evaluation_results, ground_truth, genes, cell_lines, unique_genes, unique_cell_lines)
         
         # Compute CAGI5-specific metrics (K562 vs HepG2 aggregation)
         self._compute_cagi5_metrics(evaluation_results)
@@ -598,22 +610,22 @@ class CAGI5VEPProcessor:
         
         return step_results
     
-    def _evaluate_all_steps(self, cosine_results: Optional[Dict], score_matrix_results: Optional[Dict], 
+    def _evaluate_all_steps(self, embedding_results: Optional[Dict], score_matrix_results: Optional[Dict], 
                           evaluation_results: Dict, ground_truth: torch.Tensor, genes: np.ndarray, 
                           cell_lines: np.ndarray, unique_genes: list, unique_cell_lines: list):
         """Evaluate all intermediate steps when save_intermediates=True."""
         print("  Evaluating all intermediate steps...")
         
-        # Evaluate cosine similarity for all steps
-        if cosine_results is not None and cosine_results['all_steps'] is not None:
-            evaluation_results['all_steps_metrics']['cosine_method'] = {}
-            for step_name, step_data in cosine_results['all_steps'].items():
-                predictions = step_data['cosine_scores']
+        # Evaluate embedding similarity for all steps
+        if embedding_results is not None and embedding_results['all_steps'] is not None:
+            evaluation_results['all_steps_metrics']['embedding_method'] = {}
+            for step_name, step_data in embedding_results['all_steps'].items():
+                predictions = step_data['similarity_scores']
                 step_results = self._evaluate_single_step(
                     predictions, ground_truth, genes, cell_lines, unique_genes, unique_cell_lines
                 )
                 step_results['noise_level'] = step_data['noise_level']
-                evaluation_results['all_steps_metrics']['cosine_method'][step_name] = step_results
+                evaluation_results['all_steps_metrics']['embedding_method'][step_name] = step_results
         
         # Evaluate score matrix for all steps  
         if score_matrix_results is not None and score_matrix_results['all_steps'] is not None:
@@ -633,7 +645,7 @@ class CAGI5VEPProcessor:
         For K562: Direct Pearson r (PKLR gene only)
         For HepG2: Average Pearson r across LDLR, F9, SORT1 genes
         """
-        for method_name in ['cosine_method', 'score_matrix_method']:
+        for method_name in ['embedding_method', 'score_matrix_method']:
             if method_name not in evaluation_results['per_gene_results']:
                 continue
                 
@@ -667,7 +679,7 @@ class CAGI5VEPProcessor:
                 'hepg2_average_pearson_r': hepg2_average_r
             })
     
-    def save_results_h5(self, output_path: str, cosine_results: Optional[Dict] = None,
+    def save_results_h5(self, output_path: str, embedding_results: Optional[Dict] = None,
                        score_matrix_results: Optional[Dict] = None, evaluation_results: Dict = None,
                        sigma_values: torch.Tensor = None, default_sigma_idx: int = None):
         """
@@ -675,7 +687,7 @@ class CAGI5VEPProcessor:
         
         Args:
             output_path: Path to output H5 file
-            cosine_results: Cosine similarity results
+            embedding_results: Embedding similarity results
             score_matrix_results: Score matrix results
             evaluation_results: Evaluation metrics
             sigma_values: Noise schedule values
@@ -694,8 +706,8 @@ class CAGI5VEPProcessor:
             meta_group.create_dataset('timestamp', data=datetime.now().isoformat())
             
             methods_used = []
-            if cosine_results is not None:
-                methods_used.append('cosine_similarity')
+            if embedding_results is not None:
+                methods_used.append('embedding_similarity')
             if score_matrix_results is not None:
                 methods_used.append('score_matrix')
             meta_group.create_dataset('methods_used', data=methods_used)
@@ -725,9 +737,9 @@ class CAGI5VEPProcessor:
                 if default_sigma_idx is not None:
                     noise_group.create_dataset('default_sigma_idx', data=default_sigma_idx)
             
-            # Save cosine similarity results
-            if cosine_results is not None:
-                self._save_cosine_results_h5(f, cosine_results)
+            # Save embedding similarity results
+            if embedding_results is not None:
+                self._save_embedding_results_h5(f, embedding_results)
             
             # Save score matrix results
             if score_matrix_results is not None:
@@ -739,28 +751,58 @@ class CAGI5VEPProcessor:
         
         print(f"✓ Results saved to {output_path}")
     
-    def _save_cosine_results_h5(self, f: h5py.File, cosine_results: Dict):
-        """Save cosine similarity results to H5 file."""
-        cosine_group = f.create_group('method_cosine_similarity')
+    def _save_embedding_results_h5(self, f: h5py.File, embedding_results: Dict):
+        """Save embedding similarity results to H5 file."""
+        embedding_group = f.create_group('method_embedding_similarity')
         
         # Default step
-        default_data = cosine_results['default_step']
-        default_group = cosine_group.create_group('default_step')
+        default_data = embedding_results['default_step']
+        default_group = embedding_group.create_group('default_step')
         default_group.create_dataset('ref_representations', data=default_data['ref_representations'].float().numpy())
         default_group.create_dataset('alt_representations', data=default_data['alt_representations'].float().numpy())
-        default_group.create_dataset('cosine_scores', data=default_data['cosine_scores'].float().numpy())
+        # Save similarity scores (handle both single metric and all metrics cases)
+        if 'similarity_scores' in default_data:
+            default_group.create_dataset('similarity_scores', data=default_data['similarity_scores'].float().numpy())
+        
+        # Save all metric-specific scores if they exist
+        for key in default_data.keys():
+            if key.startswith('similarity_scores_'):
+                default_group.create_dataset(key, data=default_data[key].float().numpy())
+            elif key.startswith('metric'):
+                metric_value = default_data[key]
+                if isinstance(metric_value, str):
+                    default_group.create_dataset(key, data=metric_value)
+                    
+        # Handle legacy metric field
+        if 'metric' in default_data:
+            default_group.create_dataset('metric', data=default_data['metric'])
         default_group.create_dataset('noise_level', data=default_data['noise_level'])
         
         # All steps (if available)
-        if cosine_results['all_steps'] is not None:
-            all_steps_group = cosine_group.create_group('all_steps')
+        if embedding_results['all_steps'] is not None:
+            all_steps_group = embedding_group.create_group('all_steps')
             # Sort steps by step name (already properly ordered with 3-digit format)
-            sorted_steps = sorted(cosine_results['all_steps'].items())
+            sorted_steps = sorted(embedding_results['all_steps'].items())
             for step_name, step_data in sorted_steps:
                 step_group = all_steps_group.create_group(step_name)
                 step_group.create_dataset('ref_representations', data=step_data['ref_representations'].float().numpy())
                 step_group.create_dataset('alt_representations', data=step_data['alt_representations'].float().numpy())
-                step_group.create_dataset('cosine_scores', data=step_data['cosine_scores'].float().numpy())
+                # Save similarity scores (handle both single metric and all metrics cases)
+                if 'similarity_scores' in step_data:
+                    step_group.create_dataset('similarity_scores', data=step_data['similarity_scores'].float().numpy())
+                
+                # Save all metric-specific scores if they exist
+                for key in step_data.keys():
+                    if key.startswith('similarity_scores_'):
+                        step_group.create_dataset(key, data=step_data[key].float().numpy())
+                    elif key.startswith('metric'):
+                        metric_value = step_data[key]
+                        if isinstance(metric_value, str):
+                            step_group.create_dataset(key, data=metric_value)
+                            
+                # Handle legacy metric field
+                if 'metric' in step_data:
+                    step_group.create_dataset('metric', data=step_data['metric'])
                 step_group.create_dataset('noise_level', data=step_data['noise_level'])
     
     def _save_score_matrix_results_h5(self, f: h5py.File, score_matrix_results: Dict):
@@ -876,8 +918,10 @@ def parse_args():
     parser.add_argument('--cagi5_csv', required=True, help='Path to CAGI5 metadata CSV file')
     
     # Optional arguments
-    parser.add_argument('--method', choices=['cosine', 'score_matrix', 'both'], default='both',
+    parser.add_argument('--method', choices=['embedding', 'score_matrix', 'both'], default='both',
                        help='Prediction method to use')
+    parser.add_argument('--embedding_metric', choices=['cosine', 'l1', 'l2', 'dot', 'all'], default='cosine',
+                       help='Distance metric for embedding method (default: cosine)')
     parser.add_argument('--steps', type=int, default=230,
                        help='Number of noise steps (default: sequence length)')
     parser.add_argument('--save_intermediates', action='store_true',
@@ -998,16 +1042,49 @@ def main():
     print(f"Generated {len(sigma_values)} noise levels, using step {default_sigma_idx} as default (σ={sigma_values[default_sigma_idx]:.4f})")
     
     # Initialize results storage
-    cosine_results = None
+    embedding_results = None
     score_matrix_results = None
     
     # Run prediction methods
-    if args.method in ['cosine', 'both']:
-        print(f"\n🧮 Running cosine similarity method...")
-        cosine_results = processor.predict_cosine_similarity(
-            sigma_values, default_sigma_idx, args.batch_size, args.save_intermediates
-        )
-        print(f"✓ Cosine similarity predictions completed")
+    if args.method in ['embedding', 'both']:
+        if args.embedding_metric == 'all':
+            print(f"\n🧮 Running embedding similarity method with all metrics...")
+            # Run all metrics and combine results
+            all_metrics_results = {'default_step': {}, 'all_steps': {} if args.save_intermediates else None}
+            
+            for metric in ['cosine', 'l1', 'l2', 'dot']:
+                print(f"  Computing {metric} metric...")
+                metric_results = processor.predict_embedding_similarity(
+                    sigma_values, default_sigma_idx, args.batch_size, args.save_intermediates, metric
+                )
+                
+                # Store results with metric suffix
+                all_metrics_results['default_step'][f'similarity_scores_{metric}'] = metric_results['default_step']['similarity_scores']
+                all_metrics_results['default_step']['ref_representations'] = metric_results['default_step']['ref_representations']
+                all_metrics_results['default_step']['alt_representations'] = metric_results['default_step']['alt_representations']
+                all_metrics_results['default_step']['noise_level'] = metric_results['default_step']['noise_level']
+                all_metrics_results['default_step'][f'metric_{metric}'] = metric
+                
+                if args.save_intermediates and metric_results['all_steps'] is not None:
+                    for step_name, step_data in metric_results['all_steps'].items():
+                        if step_name not in all_metrics_results['all_steps']:
+                            all_metrics_results['all_steps'][step_name] = {}
+                        all_metrics_results['all_steps'][step_name][f'similarity_scores_{metric}'] = step_data['similarity_scores']
+                        all_metrics_results['all_steps'][step_name]['ref_representations'] = step_data['ref_representations']
+                        all_metrics_results['all_steps'][step_name]['alt_representations'] = step_data['alt_representations']
+                        all_metrics_results['all_steps'][step_name]['noise_level'] = step_data['noise_level']
+                        all_metrics_results['all_steps'][step_name][f'metric_{metric}'] = metric
+                        
+            # Use cosine as default for evaluation
+            all_metrics_results['default_step']['similarity_scores'] = all_metrics_results['default_step']['similarity_scores_cosine']
+            all_metrics_results['default_step']['metric'] = 'all'
+            embedding_results = all_metrics_results
+        else:
+            print(f"\n🧮 Running embedding similarity method with {args.embedding_metric} metric...")
+            embedding_results = processor.predict_embedding_similarity(
+                sigma_values, default_sigma_idx, args.batch_size, args.save_intermediates, args.embedding_metric
+            )
+        print(f"✓ Embedding similarity predictions completed")
     
     if args.method in ['score_matrix', 'both']:
         print(f"\n📈 Running score matrix method...")
@@ -1018,7 +1095,7 @@ def main():
     
     # Evaluate predictions
     print(f"\n📏 Evaluating predictions...")
-    evaluation_results = processor.evaluate_predictions(cosine_results, score_matrix_results, args.save_intermediates)
+    evaluation_results = processor.evaluate_predictions(embedding_results, score_matrix_results, args.save_intermediates)
     print(f"✓ Evaluation completed")
     
     # Print results summary
@@ -1027,7 +1104,7 @@ def main():
     # Save results to H5 file
     print(f"\n💾 Saving results...")
     processor.save_results_h5(
-        args.output_h5, cosine_results, score_matrix_results, evaluation_results,
+        args.output_h5, embedding_results, score_matrix_results, evaluation_results,
         sigma_values, default_sigma_idx
     )
     
