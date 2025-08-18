@@ -447,7 +447,8 @@ class CAGI5VEPProcessor:
         evaluation_results = {
             'overall_metrics': {},
             'per_gene_results': {},
-            'per_cell_line_results': {}
+            'per_cell_line_results': {},
+            'ground_truth': ground_truth  # Store for later use
         }
         
         # If save_intermediates, also evaluate all steps
@@ -758,25 +759,31 @@ class CAGI5VEPProcessor:
         # Default step
         default_data = embedding_results['default_step']
         default_group = embedding_group.create_group('default_step')
-        default_group.create_dataset('ref_representations', data=default_data['ref_representations'].float().numpy())
-        default_group.create_dataset('alt_representations', data=default_data['alt_representations'].float().numpy())
+        create_or_overwrite_dataset(default_group, 'ref_representations', default_data['ref_representations'].float().numpy())
+        create_or_overwrite_dataset(default_group, 'alt_representations', default_data['alt_representations'].float().numpy())
+        # Helper function to create or overwrite dataset
+        def create_or_overwrite_dataset(group, name, data):
+            if name in group:
+                del group[name]
+            group.create_dataset(name, data=data)
+        
         # Save similarity scores (handle both single metric and all metrics cases)
         if 'similarity_scores' in default_data:
-            default_group.create_dataset('similarity_scores', data=default_data['similarity_scores'].float().numpy())
+            create_or_overwrite_dataset(default_group, 'similarity_scores', default_data['similarity_scores'].float().numpy())
         
         # Save all metric-specific scores if they exist
         for key in default_data.keys():
             if key.startswith('similarity_scores_'):
-                default_group.create_dataset(key, data=default_data[key].float().numpy())
+                create_or_overwrite_dataset(default_group, key, default_data[key].float().numpy())
             elif key.startswith('metric'):
                 metric_value = default_data[key]
                 if isinstance(metric_value, str):
-                    default_group.create_dataset(key, data=metric_value)
+                    create_or_overwrite_dataset(default_group, key, metric_value)
                     
         # Handle legacy metric field
         if 'metric' in default_data:
-            default_group.create_dataset('metric', data=default_data['metric'])
-        default_group.create_dataset('noise_level', data=default_data['noise_level'])
+            create_or_overwrite_dataset(default_group, 'metric', default_data['metric'])
+        create_or_overwrite_dataset(default_group, 'noise_level', default_data['noise_level'])
         
         # All steps (if available)
         if embedding_results['all_steps'] is not None:
@@ -785,25 +792,25 @@ class CAGI5VEPProcessor:
             sorted_steps = sorted(embedding_results['all_steps'].items())
             for step_name, step_data in sorted_steps:
                 step_group = all_steps_group.create_group(step_name)
-                step_group.create_dataset('ref_representations', data=step_data['ref_representations'].float().numpy())
-                step_group.create_dataset('alt_representations', data=step_data['alt_representations'].float().numpy())
+                create_or_overwrite_dataset(step_group, 'ref_representations', step_data['ref_representations'].float().numpy())
+                create_or_overwrite_dataset(step_group, 'alt_representations', step_data['alt_representations'].float().numpy())
                 # Save similarity scores (handle both single metric and all metrics cases)
                 if 'similarity_scores' in step_data:
-                    step_group.create_dataset('similarity_scores', data=step_data['similarity_scores'].float().numpy())
+                    create_or_overwrite_dataset(step_group, 'similarity_scores', step_data['similarity_scores'].float().numpy())
                 
                 # Save all metric-specific scores if they exist
                 for key in step_data.keys():
                     if key.startswith('similarity_scores_'):
-                        step_group.create_dataset(key, data=step_data[key].float().numpy())
+                        create_or_overwrite_dataset(step_group, key, step_data[key].float().numpy())
                     elif key.startswith('metric'):
                         metric_value = step_data[key]
                         if isinstance(metric_value, str):
-                            step_group.create_dataset(key, data=metric_value)
+                            create_or_overwrite_dataset(step_group, key, metric_value)
                             
                 # Handle legacy metric field
                 if 'metric' in step_data:
-                    step_group.create_dataset('metric', data=step_data['metric'])
-                step_group.create_dataset('noise_level', data=step_data['noise_level'])
+                    create_or_overwrite_dataset(step_group, 'metric', step_data['metric'])
+                create_or_overwrite_dataset(step_group, 'noise_level', step_data['noise_level'])
     
     def _save_score_matrix_results_h5(self, f: h5py.File, score_matrix_results: Dict):
         """Save score matrix results to H5 file."""
@@ -938,18 +945,41 @@ def parse_args():
     return parser.parse_args()
 
 
-def print_results_summary(evaluation_results: Dict):
+def print_results_summary(evaluation_results: Dict, embedding_results: Optional[Dict] = None, embedding_metric: str = 'cosine'):
     """Print a summary of evaluation results."""
     print("\n" + "="*60)
     print("CAGI5 VARIANT EFFECT PREDICTION RESULTS")
     print("="*60)
     
     for method_name, metrics in evaluation_results['overall_metrics'].items():
-        print(f"\n{method_name.upper().replace('_', ' ')}:")
-        print("-" * 40)
-        print(f"Overall Pearson r: {metrics['pearson_r']:.4f} (p={metrics['p_value']:.2e})")
-        print(f"K562 Pearson r (PKLR): {metrics['k562_pearson_r']:.4f}")
-        print(f"HepG2 Average Pearson r: {metrics['hepg2_average_pearson_r']:.4f}")
+        if method_name == 'embedding_method':
+            print(f"\nEMBEDDING METHOD ({embedding_metric.upper()}):")
+            print("-" * 50)
+            print(f"Overall Pearson r: {metrics['pearson_r']:.4f} (p={metrics['p_value']:.2e})")
+            print(f"K562 Pearson r (PKLR): {metrics['k562_pearson_r']:.4f}")
+            print(f"HepG2 Average Pearson r: {metrics['hepg2_average_pearson_r']:.4f}")
+            
+            # If we have "all" metrics, evaluate and show each one
+            if embedding_metric == 'all' and embedding_results is not None:
+                print("\n  Individual metric results:")
+                metric_names = ['cosine', 'l1', 'l2', 'dot']
+                ground_truth = evaluation_results.get('ground_truth', None)
+                
+                for metric in metric_names:
+                    if f'similarity_scores_{metric}' in embedding_results['default_step']:
+                        scores = embedding_results['default_step'][f'similarity_scores_{metric}']
+                        if ground_truth is not None and len(ground_truth) > 0:
+                            from scipy.stats import pearsonr
+                            r, p = pearsonr(scores.numpy(), ground_truth.numpy())
+                            print(f"    {metric.upper()}: r={r:.4f} (p={p:.2e})")
+                        else:
+                            print(f"    {metric.upper()}: scores saved (evaluation requires ground truth)")
+        else:
+            print(f"\n{method_name.upper().replace('_', ' ')}:")
+            print("-" * 40)
+            print(f"Overall Pearson r: {metrics['pearson_r']:.4f} (p={metrics['p_value']:.2e})")
+            print(f"K562 Pearson r (PKLR): {metrics['k562_pearson_r']:.4f}")
+            print(f"HepG2 Average Pearson r: {metrics['hepg2_average_pearson_r']:.4f}")
         
         # Per-gene breakdown
         if method_name in evaluation_results['per_gene_results']:
@@ -962,6 +992,8 @@ def print_results_summary(evaluation_results: Dict):
                     print(f"  {gene}: r={r:.4f} (n={n})")
                 else:
                     print(f"  {gene}: insufficient data (n={n})")
+            
+            # Note: Individual metric evaluations are shown above when embedding_metric == 'all'
 
 
 def load_results_from_h5(h5_path: str) -> Dict[str, Any]:
@@ -1099,7 +1131,7 @@ def main():
     print(f"✓ Evaluation completed")
     
     # Print results summary
-    print_results_summary(evaluation_results)
+    print_results_summary(evaluation_results, embedding_results, args.embedding_metric)
     
     # Save results to H5 file
     print(f"\n💾 Saving results...")
