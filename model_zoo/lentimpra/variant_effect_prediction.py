@@ -962,9 +962,7 @@ def print_results_summary(evaluation_results: Dict, embedding_results: Optional[
                 metric_names = ['cosine', 'l1', 'l2', 'dot']
                 ground_truth = evaluation_results.get('ground_truth', None)
                 genes = processor.metadata_df['gene'].values
-                cell_lines = processor.metadata_df['cell_line'].values
                 unique_genes = sorted(processor.metadata_df['gene'].unique())
-                unique_cell_lines = sorted(processor.metadata_df['cell_line'].unique())
                 
                 for metric in metric_names:
                     if f'similarity_scores_{metric}' in embedding_results['default_step']:
@@ -1038,8 +1036,9 @@ def print_results_summary(evaluation_results: Dict, embedding_results: Optional[
             print(f"K562 Pearson r (PKLR): {metrics['k562_pearson_r']:.4f}")
             print(f"HepG2 Average Pearson r: {metrics['hepg2_average_pearson_r']:.4f}")
         
-        # Per-gene breakdown
-        if method_name in evaluation_results['per_gene_results']:
+        # Per-gene breakdown (skip for embedding method when using "all" metrics since we already printed them)
+        if (method_name in evaluation_results['per_gene_results'] and 
+            not (method_name == 'embedding_method' and embedding_metric == 'all')):
             gene_data = evaluation_results['per_gene_results'][method_name]
             print("\nPer-gene results:")
             for i, gene in enumerate(gene_data['gene_names']):
