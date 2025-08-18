@@ -974,28 +974,9 @@ def print_results_summary(evaluation_results: Dict, embedding_results: Optional[
                             r, p = pearsonr(scores.numpy(), ground_truth.numpy())
                             print(f"Overall Pearson r: {r:.4f} (p={p:.2e})")
                             
-                            # Compute CAGI5-specific metrics like the main evaluation does
-                            if 'per_gene_results' in evaluation_results and 'embedding_method' in evaluation_results['per_gene_results']:
-                                gene_data = evaluation_results['per_gene_results']['embedding_method']
-                                gene_names = gene_data['gene_names']
-                                
-                                # K562 metric (PKLR gene) - compute for this specific metric
-                                try:
-                                    pklr_idx = gene_names.index('PKLR')
-                                    # Get PKLR samples for this metric
-                                    if hasattr(evaluation_results, '_metadata_df'):
-                                        pklr_mask = evaluation_results._metadata_df['gene'] == 'PKLR'
-                                        pklr_scores = scores[pklr_mask].numpy()
-                                        pklr_truth = ground_truth[pklr_mask].numpy()
-                                        k562_r, _ = pearsonr(pklr_scores, pklr_truth)
-                                    else:
-                                        k562_r = metrics['k562_pearson_r']  # fallback to stored value
-                                    print(f"K562 Pearson r (PKLR): {k562_r:.4f}")
-                                except (ValueError, IndexError):
-                                    print(f"K562 Pearson r (PKLR): N/A")
-                                
-                                # HepG2 metric - simplified version
-                                print(f"HepG2 Average Pearson r: {metrics['hepg2_average_pearson_r']:.4f}")  # Use stored value as approximation
+                            # Use stored CAGI5 metrics as approximation (exact computation would require gene-level breakdown)
+                            print(f"K562 Pearson r (PKLR): {metrics['k562_pearson_r']:.4f}")
+                            print(f"HepG2 Average Pearson r: {metrics['hepg2_average_pearson_r']:.4f}")
                             
                             # Per-gene results (use stored results as approximation - would need full recomputation for accuracy)
                             if 'per_gene_results' in evaluation_results and 'embedding_method' in evaluation_results['per_gene_results']:
@@ -1033,10 +1014,6 @@ def print_results_summary(evaluation_results: Dict, embedding_results: Optional[
                 else:
                     print(f"  {gene}: insufficient data (n={n})")
             
-            # For single metrics, show per-gene breakdown
-            if method_name == 'embedding_method' and embedding_metric != 'all':
-
-
 def load_results_from_h5(h5_path: str) -> Dict[str, Any]:
     """
     Utility function to load results from saved H5 file.
