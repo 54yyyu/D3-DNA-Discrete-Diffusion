@@ -444,6 +444,9 @@ class CAGI5VEPProcessor:
         """
         print("Evaluating predictions...")
         
+        # Get ground truth scores
+        ground_truth = torch.tensor(self.metadata_df['score'].values, dtype=torch.float32)
+        
         evaluation_results = {
             'overall_metrics': {},
             'per_gene_results': {},
@@ -454,9 +457,6 @@ class CAGI5VEPProcessor:
         # If save_intermediates, also evaluate all steps
         if save_intermediates:
             evaluation_results['all_steps_metrics'] = {}
-        
-        # Get ground truth scores
-        ground_truth = torch.tensor(self.metadata_df['score'].values, dtype=torch.float32)
         genes = self.metadata_df['gene'].values
         cell_lines = self.metadata_df['cell_line'].values
         
