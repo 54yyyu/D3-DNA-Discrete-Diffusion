@@ -946,7 +946,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def print_results_summary(evaluation_results: Dict, embedding_results: Optional[Dict] = None, embedding_metric: str = 'cosine'):
+def print_results_summary(evaluation_results: Dict, embedding_results: Optional[Dict] = None, embedding_metric: str = 'cosine', processor=None):
     """Print a summary of evaluation results."""
     print("\n" + "="*60)
     print("CAGI5 VARIANT EFFECT PREDICTION RESULTS")
@@ -955,12 +955,16 @@ def print_results_summary(evaluation_results: Dict, embedding_results: Optional[
     for method_name, metrics in evaluation_results['overall_metrics'].items():
         if method_name == 'embedding_method':
             # If we have "all" metrics, show results for each individual metric
-            if embedding_metric == 'all' and embedding_results is not None:
+            if embedding_metric == 'all' and embedding_results is not None and processor is not None:
                 from scipy.stats import pearsonr
                 import numpy as np
                 
                 metric_names = ['cosine', 'l1', 'l2', 'dot']
                 ground_truth = evaluation_results.get('ground_truth', None)
+                genes = processor.metadata_df['gene'].values
+                cell_lines = processor.metadata_df['cell_line'].values
+                unique_genes = sorted(processor.metadata_df['gene'].unique())
+                unique_cell_lines = sorted(processor.metadata_df['cell_line'].unique())
                 
                 for metric in metric_names:
                     if f'similarity_scores_{metric}' in embedding_results['default_step']:
@@ -974,21 +978,53 @@ def print_results_summary(evaluation_results: Dict, embedding_results: Optional[
                             r, p = pearsonr(scores.numpy(), ground_truth.numpy())
                             print(f"Overall Pearson r: {r:.4f} (p={p:.2e})")
                             
-                            # Use stored CAGI5 metrics as approximation (exact computation would require gene-level breakdown)
-                            print(f"K562 Pearson r (PKLR): {metrics['k562_pearson_r']:.4f}")
-                            print(f"HepG2 Average Pearson r: {metrics['hepg2_average_pearson_r']:.4f}")
+                            # Compute K562 Pearson r (PKLR gene only)
+                            try:
+                                pklr_mask = genes == 'PKLR'
+                                if pklr_mask.sum() > 1:
+                                    pklr_scores = scores[pklr_mask].numpy()
+                                    pklr_truth = ground_truth[pklr_mask].numpy()
+                                    k562_r, _ = pearsonr(pklr_scores, pklr_truth)
+                                    print(f"K562 Pearson r (PKLR): {k562_r:.4f}")
+                                else:
+                                    print(f"K562 Pearson r (PKLR): N/A (insufficient data)")
+                            except Exception:
+                                print(f"K562 Pearson r (PKLR): N/A (error)")
                             
-                            # Per-gene results (use stored results as approximation - would need full recomputation for accuracy)
-                            if 'per_gene_results' in evaluation_results and 'embedding_method' in evaluation_results['per_gene_results']:
-                                gene_data = evaluation_results['per_gene_results']['embedding_method']
-                                print("\nPer-gene results:")
-                                for i, gene in enumerate(gene_data['gene_names']):
-                                    r = gene_data['pearson_correlations'][i]
-                                    n = gene_data['sample_counts'][i]
-                                    if not np.isnan(r):
-                                        print(f"  {gene}: r={r:.4f} (n={n})")
-                                    else:
-                                        print(f"  {gene}: insufficient data (n={n})")
+                            # Compute HepG2 Average Pearson r (average of LDLR, F9, SORT1)
+                            hepg2_genes = ['LDLR', 'F9', 'SORT1']
+                            hepg2_correlations = []
+                            for gene in hepg2_genes:
+                                try:
+                                    gene_mask = genes == gene
+                                    if gene_mask.sum() > 1:
+                                        gene_scores = scores[gene_mask].numpy()
+                                        gene_truth = ground_truth[gene_mask].numpy()
+                                        gene_r, _ = pearsonr(gene_scores, gene_truth)
+                                        if not np.isnan(gene_r):
+                                            hepg2_correlations.append(abs(gene_r))
+                                except Exception:
+                                    continue
+                            
+                            hepg2_avg_r = np.mean(hepg2_correlations) if hepg2_correlations else np.nan
+                            if not np.isnan(hepg2_avg_r):
+                                print(f"HepG2 Average Pearson r: {hepg2_avg_r:.4f}")
+                            else:
+                                print(f"HepG2 Average Pearson r: N/A")
+                            
+                            # Per-gene results
+                            print("\nPer-gene results:")
+                            for gene in unique_genes:
+                                gene_mask = genes == gene
+                                if gene_mask.sum() > 1:
+                                    gene_scores = scores[gene_mask].numpy()
+                                    gene_truth = ground_truth[gene_mask].numpy()
+                                    gene_r, _ = pearsonr(gene_scores, gene_truth)
+                                    n = gene_mask.sum()
+                                    print(f"  {gene}: r={gene_r:.4f} (n={n})")
+                                else:
+                                    n = gene_mask.sum()
+                                    print(f"  {gene}: insufficient data (n={n})")
             else:
                 print(f"\nEMBEDDING METHOD ({embedding_metric.upper()}):")
                 print("-" * 50)
@@ -1149,7 +1185,7 @@ def main():
     print(f"✓ Evaluation completed")
     
     # Print results summary
-    print_results_summary(evaluation_results, embedding_results, args.embedding_metric)
+    print_results_summary(evaluation_results, embedding_results, args.embedding_metric, processor)
     
     # Save results to H5 file
     print(f"\n💾 Saving results...")
