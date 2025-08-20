@@ -28,8 +28,8 @@ class Router:
             seed: Random seed for reproducible token selection
         """
         self.seed = seed
-        self.generator = torch.Generator()
-        self.generator.manual_seed(seed)
+        # We'll create device-specific generators on demand
+        self._generators = {}
         
     def get_mask(self, x: torch.Tensor, selection_ratio: float = 0.5) -> Dict[str, torch.Tensor]:
         """
@@ -55,10 +55,15 @@ class Router:
         num_mask = num_tokens - num_keep
         
         # Generate random noise for token selection
-        # Use a consistent generator for reproducible results
+        # Get or create device-specific generator
+        device_key = str(device)
+        if device_key not in self._generators:
+            self._generators[device_key] = torch.Generator(device=device).manual_seed(self.seed)
+        
+        generator = self._generators[device_key]
         noise_random = torch.rand(
             batch_size, num_tokens, 
-            device=device, generator=self.generator.fork()
+            device=device, generator=generator.fork()
         )
         
         # Get shuffle indices based on random noise
