@@ -55,34 +55,50 @@ class cCREDataset(Dataset):
         # Load and preprocess data
         self.X = self._load_data()
         
+    # def _load_data(self) -> torch.Tensor:
+    #     """Load and preprocess data from H5 file with train/valid splitting."""
+    #     with h5py.File(self.h5_file_path, 'r') as data:
+    #         # Load all sequences from the single 'seqs' key
+    #         X = torch.tensor(np.array(data['seqs'])).permute(0, 2, 1)
+            
+    #         # Convert one-hot to indices for D3 processing
+    #         # X shape: (n_samples, 4, seq_length) -> (n_samples, seq_length)
+    #         X = torch.argmax(X, dim=1)
+            
+    #         # Create reproducible train/valid split
+    #         total_samples = X.shape[0]
+    #         np.random.seed(self.seed)
+    #         indices = np.random.permutation(total_samples)
+            
+    #         train_size = int(total_samples * self.train_ratio)
+            
+    #         if self.split == 'train':
+    #             selected_indices = indices[:train_size]
+    #         elif self.split == 'valid':
+    #             selected_indices = indices[train_size:]
+    #             if len(selected_indices) == 0:
+    #                 print(f"Warning: Validation split is empty (valid_ratio={self.valid_ratio}). "
+    #                       f"Consider setting valid_ratio > 0 for proper validation.")
+    #         else:
+    #             raise ValueError(f"Unknown split: {self.split}. Only 'train' and 'valid' are supported.")
+            
+    #         X = X[selected_indices]
+            
+    #     return X
+    
+    # Data loading function for animal promoter dataset
     def _load_data(self) -> torch.Tensor:
         """Load and preprocess data from H5 file with train/valid splitting."""
         with h5py.File(self.h5_file_path, 'r') as data:
             # Load all sequences from the single 'seqs' key
-            X = torch.tensor(np.array(data['seqs'])).permute(0, 2, 1)
-            
-            # Convert one-hot to indices for D3 processing
-            # X shape: (n_samples, 4, seq_length) -> (n_samples, seq_length)
-            X = torch.argmax(X, dim=1)
-            
-            # Create reproducible train/valid split
-            total_samples = X.shape[0]
-            np.random.seed(self.seed)
-            indices = np.random.permutation(total_samples)
-            
-            train_size = int(total_samples * self.train_ratio)
-            
             if self.split == 'train':
-                selected_indices = indices[:train_size]
+                X = torch.tensor(np.stack(data['train']['seq'])).long()
             elif self.split == 'valid':
-                selected_indices = indices[train_size:]
-                if len(selected_indices) == 0:
-                    print(f"Warning: Validation split is empty (valid_ratio={self.valid_ratio}). "
-                          f"Consider setting valid_ratio > 0 for proper validation.")
+                X = torch.tensor(np.stack(data['validation']['seq'])).long()
+            elif self.split == 'test':
+                X = torch.tensor(np.stack(data['test']['seq'])).long()
             else:
-                raise ValueError(f"Unknown split: {self.split}. Only 'train' and 'valid' are supported.")
-            
-            X = X[selected_indices]
+                raise ValueError(f"Unknown split: {self.split}")
             
         return X
     

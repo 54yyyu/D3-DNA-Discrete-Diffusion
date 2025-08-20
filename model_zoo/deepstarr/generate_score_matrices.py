@@ -231,6 +231,7 @@ class DeepSTARRScoreMatrixGenerator:
                 
                 # Generate score matrices
                 with torch.no_grad():
+                    # score_matrix = sampling_score_fn(seq_batch, batch_sigma, label_batch)
                     # Use None for targets (unconditional generation)
                     targets = None
                     score_matrix = sampling_score_fn(seq_batch, batch_sigma, targets)  # (batch, seq_len, 4)

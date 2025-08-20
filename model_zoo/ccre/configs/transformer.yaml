@@ -16,7 +16,7 @@ training:
   accum: 1
   max_epochs: 300
   checkpoint_every_n_epochs: 4
-  log_freq: 500
+  log_freq: 5000
   val_every_n_epochs: 4
   weight: standard
   snapshot_sampling: true
@@ -83,7 +83,7 @@ model:
 # Logging configuration (optional)
 wandb:
   enabled: true
-  project: d3-ccre-vep
+  project: d3-ccre-vep-animal-promoter
   name: ccre-transformer
   entity: d3-cshl
   tags: []
@@ -91,5 +91,5 @@ wandb:
 
 # Paths
 paths:
-  data_file: "/grid/koo/home/yiyu/scratch/cCRE_Processing/output_h5s/ccres_512bp_no_N.h5"
+  data_file: "model_zoo/ccre/gpn-animal-promoter-512.h5" # "/grid/koo/home/yiyu/scratch/cCRE_Processing/output_h5s/ccres_512bp_no_N.h5"
   checkpoints_dir: "checkpoints"
