@@ -17,6 +17,12 @@ def test_tread_integration():
     """Test TREAD integration with DeepSTARR transformer."""
     
     print("Testing TREAD Integration...")
+    print(f"PyTorch version: {torch.__version__}")
+    
+    # Check if fork is available
+    gen = torch.Generator()
+    has_fork = hasattr(gen, 'fork')
+    print(f"Generator fork() available: {has_fork}")
     
     # Load TREAD configuration
     config_path = "model_zoo/deepstarr/configs/transformer_tread.yaml"

@@ -61,10 +61,21 @@ class Router:
             self._generators[device_key] = torch.Generator(device=device).manual_seed(self.seed)
         
         generator = self._generators[device_key]
-        noise_random = torch.rand(
-            batch_size, num_tokens, 
-            device=device, generator=generator.fork()
-        )
+        
+        # Use fork() if available, otherwise use the generator directly
+        if hasattr(generator, 'fork'):
+            noise_random = torch.rand(
+                batch_size, num_tokens, 
+                device=device, generator=generator.fork()
+            )
+        else:
+            # Fallback: advance the generator state to maintain some randomness across calls
+            # This isn't as robust as fork() but works for basic functionality
+            _ = torch.rand(1, device=device, generator=generator)  # Advance state
+            noise_random = torch.rand(
+                batch_size, num_tokens, 
+                device=device, generator=generator
+            )
         
         # Get shuffle indices based on random noise
         ids_shuffle = torch.argsort(noise_random, dim=1)
