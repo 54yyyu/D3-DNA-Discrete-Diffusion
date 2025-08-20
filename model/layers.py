@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import math
-from typing import Optional, Tuple
+from typing import Optional
 
 from .fused_add_dropout_scale import (
     bias_dropout_add_scale_fused_train, 
@@ -45,9 +45,10 @@ class LayerNorm(nn.Module):
         self.dim = dim
         
     def forward(self, x):
+        input_dtype = x.dtype
         with torch.amp.autocast('cuda', enabled=False):
             x = F.layer_norm(x.float(), [self.dim])
-        return x * self.weight[None, None, :]
+        return (x * self.weight[None, None, :]).to(input_dtype)
 
 
 class RMSNorm(nn.Module):
@@ -69,9 +70,11 @@ class RMSNorm(nn.Module):
     
     def forward(self, x):
         """Forward pass with autocast handling."""
+        input_dtype = x.dtype
         with torch.amp.autocast('cuda', enabled=False):
-            output = self._norm(x.float()).type_as(x)
-        return output * self.weight
+            output = self._norm(x.float())
+        # Preserve input dtype for compatibility
+        return (output * self.weight).to(input_dtype)
 
 
 class TimestepEmbedder(nn.Module):

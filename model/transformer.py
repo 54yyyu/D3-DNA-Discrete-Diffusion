@@ -65,17 +65,22 @@ class Attention(nn.Module):
         qkv = self.qkv(x)
         qkv = rearrange(qkv, 'b s (three h d) -> b s three h d', three=3, h=self.num_heads)
         
-        # Apply QK normalization if enabled
+        # Apply QK normalization if enabled, preserving dtype for FlashAttention
         if not isinstance(self.q_norm, nn.Identity):
+            original_dtype = qkv.dtype
             q, k, v = qkv[:, :, 0], qkv[:, :, 1], qkv[:, :, 2]
-            q = self.q_norm(q)
-            k = self.k_norm(k)
+            q = self.q_norm(q).to(original_dtype)  # Ensure dtype preservation
+            k = self.k_norm(k).to(original_dtype)  # Ensure dtype preservation
             qkv = torch.stack([q, k, v], dim=2)
         
         # Apply rotary position embedding
         with torch.amp.autocast('cuda', enabled=False):
             cos, sin = rotary_cos_sin
             qkv = rotary.apply_rotary_pos_emb(qkv, cos.to(qkv.dtype), sin.to(qkv.dtype))
+        
+        # Ensure qkv is in fp16/bf16 for FlashAttention compatibility
+        if qkv.dtype not in [torch.float16, torch.bfloat16]:
+            qkv = qkv.half()  # Convert to fp16 if not already in supported dtype
         
         qkv = rearrange(qkv, 'b s ... -> (b s) ...')
         
