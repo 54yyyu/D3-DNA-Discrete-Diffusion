@@ -50,6 +50,30 @@ class LayerNorm(nn.Module):
         return x * self.weight[None, None, :]
 
 
+class RMSNorm(nn.Module):
+    """
+    Root Mean Square Layer Normalization (RMSNorm).
+    
+    More efficient than LayerNorm as it doesn't compute mean centering.
+    Used in modern transformer architectures like LLaMA and LightningDiT.
+    """
+    
+    def __init__(self, dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+        
+    def _norm(self, x):
+        """Apply RMSNorm normalization."""
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+    
+    def forward(self, x):
+        """Forward pass with autocast handling."""
+        with torch.amp.autocast('cuda', enabled=False):
+            output = self._norm(x.float()).type_as(x)
+        return output * self.weight
+
+
 class TimestepEmbedder(nn.Module):
     """
     Embeds scalar timesteps into vector representations using sinusoidal embeddings.
@@ -180,6 +204,40 @@ class Dense(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.dense(x)[...]
+
+
+class SwiGLUFFN(nn.Module):
+    """
+    SwiGLU Feed-Forward Network.
+    
+    More efficient activation function than GELU, used in modern transformers.
+    Combines swish activation with gated linear units.
+    """
+    
+    def __init__(
+        self,
+        in_features: int,
+        hidden_features: Optional[int] = None,
+        out_features: Optional[int] = None,
+        bias: bool = True,
+    ):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        
+        # SwiGLU uses 2/3 of the hidden dimension to match parameter count with standard FFN
+        # This follows the LightningDiT implementation
+        hidden_features = int(2 * hidden_features / 3)
+        
+        self.w12 = nn.Linear(in_features, 2 * hidden_features, bias=bias)
+        self.w3 = nn.Linear(hidden_features, out_features, bias=bias)
+    
+    @torch.compile
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x12 = self.w12(x)
+        x1, x2 = x12.chunk(2, dim=-1)
+        hidden = F.silu(x1) * x2  # SwiGLU: silu(x1) * x2
+        return self.w3(hidden)
 
 
 def get_bias_dropout_scale():
