@@ -20,6 +20,7 @@ from .layers import (
     LayerNorm, TimestepEmbedder, LabelEmbedder, #EmbeddingLayer,
     modulate_fused, get_bias_dropout_scale
 )
+from .routing_module import Router, RouterConfig
 
 
 class DDiTBlock(nn.Module):
@@ -182,6 +183,27 @@ class TransformerModel(nn.Module):
         signal_dim = config.dataset.signal_dim
         class_dropout_prob = getattr(config.model, 'class_dropout_prob', 0.1)
         
+        # TREAD routing configuration
+        self.enable_routing = getattr(config.model, 'enable_routing', False)
+        self.routes = getattr(config.model, 'routes', [])
+        
+        # Initialize router if routing is enabled
+        if self.enable_routing and self.routes:
+            self.router = Router(seed=getattr(config, 'seed', 42))
+            # Convert route configs to RouterConfig objects
+            self.route_configs = []
+            for route in self.routes:
+                route_config = RouterConfig(
+                    selection_ratio=route.get('selection_ratio', 0.5),
+                    start_layer_idx=route.get('start_layer_idx', 2),
+                    end_layer_idx=route.get('end_layer_idx', 8),
+                    routing_loss_weight=route.get('routing_loss_weight', 0.0)
+                )
+                self.route_configs.append(route_config)
+        else:
+            self.router = None
+            self.route_configs = []
+        
         # Core components
         self.vocab_embed = EmbeddingLayer(
             dim=config.model.hidden_size, 
@@ -215,7 +237,8 @@ class TransformerModel(nn.Module):
         self.scale_by_sigma = getattr(config.model, 'scale_by_sigma', False)
 
     def forward(self, indices: torch.Tensor, labels: Optional[torch.Tensor] = None, 
-                train: bool = True, sigma: Optional[torch.Tensor] = None, layer_idx: Optional[int] = None) -> torch.Tensor:
+                train: bool = True, sigma: Optional[torch.Tensor] = None, layer_idx: Optional[int] = None,
+                force_routing: bool = False, overwrite_selection_ratio: Optional[float] = None) -> torch.Tensor:
         """
         Forward pass through the transformer.
         
@@ -225,6 +248,8 @@ class TransformerModel(nn.Module):
             train: Training mode flag
             sigma: Noise level (batch_size,)
             layer_idx: Index of the layer to return the representation of
+            force_routing: Force routing even during inference
+            overwrite_selection_ratio: Override configured selection ratio
         Returns:
             Model output (batch_size, seq_length, vocab_size)
         """
@@ -238,15 +263,52 @@ class TransformerModel(nn.Module):
         # Rotary position encoding
         rotary_cos_sin = self.rotary_emb(x)
 
+        # Determine if routing should be used
+        use_routing = (self.training and self.enable_routing and self.route_configs) or force_routing
+        routing_variables = {}
+        routing_loss = 0.0
+        
         # Forward through transformer blocks
         with torch.amp.autocast('cuda', dtype=torch.bfloat16):
             for i in range(len(self.blocks)):
+                # Check if we should start routing for any route
+                if use_routing:
+                    for route_idx, route_config in enumerate(self.route_configs):
+                        if i == route_config.start_layer_idx:
+                            # Store original state before routing
+                            routing_variables[f'x_original_{route_idx}'] = x.clone()
+                            
+                            # Get selection ratio (allow override)
+                            selection_ratio = overwrite_selection_ratio if overwrite_selection_ratio is not None else route_config.selection_ratio
+                            
+                            # Get mask info and start routing
+                            mask_info = self.router.get_mask(x, selection_ratio)
+                            routing_variables[f'mask_info_{route_idx}'] = mask_info
+                            x = self.router.start_route(x, mask_info)
+                
+                # Apply transformer block
                 x = self.blocks[i](x, rotary_cos_sin, c, seqlens=None)
+                
+                # Check if we should end routing for any route
+                if use_routing:
+                    for route_idx, route_config in enumerate(self.route_configs):
+                        if i == route_config.end_layer_idx:
+                            # End routing and restore full sequence
+                            mask_info = routing_variables[f'mask_info_{route_idx}']
+                            original_x = routing_variables[f'x_original_{route_idx}']
+                            x = self.router.end_route(x, mask_info, original_x)
+                            
+                            # Clean up routing variables
+                            del routing_variables[f'x_original_{route_idx}']
+                            del routing_variables[f'mask_info_{route_idx}']
+                
+                # Layer representation extraction
                 if layer_idx is not None:
                     if i == layer_idx:
                         rep = x
                 else:
                     rep = None
+                    
             x = self.output_layer(x, c)
 
         # Mask out the input tokens (standard diffusion technique)
