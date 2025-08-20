@@ -110,9 +110,6 @@ wandb:
   project: d3-dna-diffusion-tread
   name: deepstarr-tread-transformer
   entity: d3-cshl
-  tags: ["tread", "routing", "efficiency"]
-  notes: "TREAD-enhanced transformer for efficient DNA sequence diffusion"
-  # id: "tread_experiment_1"
 
 # Paths - provide full paths
 paths:
