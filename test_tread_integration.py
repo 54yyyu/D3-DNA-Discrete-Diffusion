@@ -90,7 +90,8 @@ def test_tread_integration():
     print(f"✓ Custom selection ratio test successful, output shape: {output_custom_ratio.shape}")
     
     # Verify outputs have correct dimensions
-    expected_shape = (batch_size, seq_len, 5)  # 4 DNA tokens + 1 absorb token
+    # DeepSTARR uses uniform graph (no absorb token), so vocab size = 4 (A, T, G, C)
+    expected_shape = (batch_size, seq_len, 4)  # 4 DNA tokens (A, T, G, C)
     assert output_no_routing.shape == expected_shape, f"Expected {expected_shape}, got {output_no_routing.shape}"
     assert output_with_routing.shape == expected_shape, f"Expected {expected_shape}, got {output_with_routing.shape}"
     
