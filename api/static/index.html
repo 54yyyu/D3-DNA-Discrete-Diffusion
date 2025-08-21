@@ -7,8 +7,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/h5wasm@0.4.9/dist/esm/hdf5.js"></script>
-    <script src="bundle.js" type="text/javascript"></script>
-    <script src="memesuite-lite.js" type="text/javascript"></script>
+    <script src="/static/bundle.js" type="text/javascript"></script>
+    <script src="/static/memesuite-lite.js" type="text/javascript"></script>
     <style>
         /* Theme variables */
         :root {
@@ -2107,10 +2107,12 @@
             }
 
             async generateData() {
+                // Get the specific generate button
+                const generateBtn = document.querySelector('.modal-footer .btn-primary');
+                const originalText = generateBtn.textContent;
+                
                 try {
                     // Show loading state
-                    const generateBtn = document.querySelector('.btn-primary');
-                    const originalText = generateBtn.textContent;
                     generateBtn.textContent = 'Generating...';
                     generateBtn.disabled = true;
 
@@ -2132,12 +2134,14 @@
                     }
 
                     const data = await response.json();
+                    console.log('Received data from backend:', data);
 
-                    // Close modal
+                    // Close modal first
                     this.closeGenerateModal();
 
                     // Convert backend data format to visualizer format
                     const visualizerData = this.convertBackendDataToVisualizerFormat(data);
+                    console.log('Converted data for visualizer:', visualizerData);
 
                     // Load the generated data into the visualizer
                     this.data = visualizerData;
@@ -2151,7 +2155,6 @@
                     alert(`Error generating data: ${error.message}`);
                 } finally {
                     // Reset button state
-                    const generateBtn = document.querySelector('.btn-primary');
                     generateBtn.textContent = originalText;
                     generateBtn.disabled = false;
                 }
@@ -2206,6 +2209,10 @@
 
             convertBackendDataToVisualizerFormat(backendData) {
                 // Convert the backend data format to match what the visualizer expects
+                // The backend returns token sequences (integers), but visualizer expects DNA strings
+                
+                const tokenToBase = ['A', 'C', 'G', 'T']; // Standard nucleotide mapping
+                
                 const visualizerData = {
                     metadata: backendData.metadata,
                     steps: backendData.steps.map(step => ({
@@ -2213,13 +2220,21 @@
                         timestep: step.timestep,
                         noise_level: step.noise_level,
                         noise_rate: step.noise_rate || 0,
-                        sequences: step.sequences,
+                        // Convert token sequences to DNA strings
+                        sequences: step.sequences.map(tokenSeq => 
+                            tokenSeq.map(token => tokenToBase[token] || 'N').join('')
+                        ),
                         score_matrices: step.score_matrices,
                         prob_matrices: step.prob_matrices || null,
                         attribution_matrices: step.attribution_matrices || null,
                         oracle_mses: step.oracle_mses || []
                     }))
                 };
+
+                // Add final sequences as metadata (they're already strings)
+                if (backendData.final_sequences) {
+                    visualizerData.final_sequences = backendData.final_sequences;
+                }
 
                 return visualizerData;
             }
