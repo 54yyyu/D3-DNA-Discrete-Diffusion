@@ -2152,7 +2152,15 @@
 
                 } catch (error) {
                     console.error('Error generating data:', error);
-                    alert(`Error generating data: ${error.message}`);
+                    console.error('Error stack:', error.stack);
+                    
+                    // Show more specific error message
+                    let errorMessage = error.message;
+                    if (errorMessage.includes('forEach')) {
+                        errorMessage = 'Data format error: Please check the console for details';
+                    }
+                    
+                    alert(`Error generating data: ${errorMessage}`);
                 } finally {
                     // Reset button state
                     generateBtn.textContent = originalText;
@@ -2208,35 +2216,71 @@
             }
 
             convertBackendDataToVisualizerFormat(backendData) {
-                // Convert the backend data format to match what the visualizer expects
-                // The backend returns token sequences (integers), but visualizer expects DNA strings
-                
-                const tokenToBase = ['A', 'C', 'G', 'T']; // Standard nucleotide mapping
-                
-                const visualizerData = {
-                    metadata: backendData.metadata,
-                    steps: backendData.steps.map(step => ({
-                        step: step.step,
-                        timestep: step.timestep,
-                        noise_level: step.noise_level,
-                        noise_rate: step.noise_rate || 0,
-                        // Convert token sequences to DNA strings
-                        sequences: step.sequences.map(tokenSeq => 
-                            tokenSeq.map(token => tokenToBase[token] || 'N').join('')
-                        ),
-                        score_matrices: step.score_matrices,
-                        prob_matrices: step.prob_matrices || null,
-                        attribution_matrices: step.attribution_matrices || null,
-                        oracle_mses: step.oracle_mses || []
-                    }))
-                };
+                try {
+                    console.log('Converting backend data structure:', Object.keys(backendData));
+                    
+                    // Validate required fields
+                    if (!backendData.metadata) {
+                        throw new Error('Missing metadata in backend response');
+                    }
+                    if (!backendData.steps) {
+                        throw new Error('Missing steps in backend response');
+                    }
+                    if (!Array.isArray(backendData.steps)) {
+                        throw new Error('Steps is not an array');
+                    }
+                    
+                    console.log(`Processing ${backendData.steps.length} steps`);
+                    
+                    const tokenToBase = ['A', 'C', 'G', 'T']; // Standard nucleotide mapping
+                    
+                    const visualizerData = {
+                        metadata: backendData.metadata,
+                        steps: backendData.steps.map((step, stepIndex) => {
+                            console.log(`Processing step ${stepIndex}:`, Object.keys(step));
+                            
+                            // Validate step structure
+                            if (!step.sequences) {
+                                throw new Error(`Step ${stepIndex} missing sequences`);
+                            }
+                            if (!Array.isArray(step.sequences)) {
+                                throw new Error(`Step ${stepIndex} sequences is not an array`);
+                            }
+                            
+                            return {
+                                step: step.step,
+                                timestep: step.timestep,
+                                noise_level: step.noise_level,
+                                noise_rate: step.noise_rate || 0,
+                                // Convert token sequences to DNA strings
+                                sequences: step.sequences.map((tokenSeq, seqIndex) => {
+                                    if (!Array.isArray(tokenSeq)) {
+                                        console.warn(`Step ${stepIndex}, sequence ${seqIndex} is not an array:`, typeof tokenSeq);
+                                        return 'N'.repeat(249); // Fallback for invalid sequence
+                                    }
+                                    return tokenSeq.map(token => tokenToBase[token] || 'N').join('');
+                                }),
+                                score_matrices: step.score_matrices || [],
+                                prob_matrices: step.prob_matrices || null,
+                                attribution_matrices: step.attribution_matrices || null,
+                                oracle_mses: step.oracle_mses || []
+                            };
+                        })
+                    };
 
-                // Add final sequences as metadata (they're already strings)
-                if (backendData.final_sequences) {
-                    visualizerData.final_sequences = backendData.final_sequences;
+                    // Add final sequences as metadata (they're already strings)
+                    if (backendData.final_sequences) {
+                        visualizerData.final_sequences = backendData.final_sequences;
+                    }
+
+                    console.log('Successfully converted data for visualizer');
+                    return visualizerData;
+                    
+                } catch (error) {
+                    console.error('Error in convertBackendDataToVisualizerFormat:', error);
+                    console.error('Backend data structure:', backendData);
+                    throw error;
                 }
-
-                return visualizerData;
             }
 
             showDownloadOption(data) {
