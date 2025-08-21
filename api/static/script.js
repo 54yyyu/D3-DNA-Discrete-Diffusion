@@ -12,6 +12,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Bind unconditional checkbox
     document.getElementById('unconditional').addEventListener('change', toggleConditioningControls);
+    
+    // Bind mode selection
+    document.getElementById('mode').addEventListener('change', toggleEvaluationControls);
 });
 
 function initializeFormControls() {
@@ -28,6 +31,7 @@ function initializeFormControls() {
     
     // Set initial conditioning controls state
     toggleConditioningControls();
+    toggleEvaluationControls();
 }
 
 function toggleConditioningControls() {
@@ -40,6 +44,31 @@ function toggleConditioningControls() {
     } else {
         conditioningControls.style.opacity = '1';
         conditioningControls.style.pointerEvents = 'auto';
+    }
+}
+
+function toggleEvaluationControls() {
+    const mode = document.getElementById('mode').value;
+    
+    // Find the evaluation options section
+    const paramGroups = document.querySelectorAll('.param-group');
+    let evaluationGroup = null;
+    
+    paramGroups.forEach(group => {
+        const heading = group.querySelector('h3');
+        if (heading && heading.textContent.includes('Evaluation Options')) {
+            evaluationGroup = group;
+        }
+    });
+    
+    if (evaluationGroup) {
+        if (mode === 'sampling') {
+            evaluationGroup.style.opacity = '0.5';
+            evaluationGroup.style.pointerEvents = 'none';
+        } else {
+            evaluationGroup.style.opacity = '1';
+            evaluationGroup.style.pointerEvents = 'auto';
+        }
     }
 }
 
@@ -85,6 +114,7 @@ function collectFormData() {
         num_samples: parseInt(document.getElementById('num_samples').value),
         steps: parseInt(document.getElementById('steps').value),
         dataset: document.getElementById('dataset').value,
+        mode: document.getElementById('mode').value,
         
         // Conditioning
         unconditional: document.getElementById('unconditional').checked,
@@ -151,6 +181,7 @@ function displayMetadataPreview(metadata, generationTime, spMse) {
     let html = `
         <div class="metadata-grid">
             <div><strong>Dataset:</strong> ${metadata.dataset}</div>
+            <div><strong>Mode:</strong> ${document.getElementById('mode').value}</div>
             <div><strong>Samples:</strong> ${metadata.num_samples}</div>
             <div><strong>Steps:</strong> ${metadata.total_steps}</div>
             <div><strong>Generation Time:</strong> ${generationTime.toFixed(2)}s</div>

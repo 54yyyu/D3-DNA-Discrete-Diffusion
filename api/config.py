@@ -17,7 +17,7 @@ class APIConfig:
         self.project_root = Path(__file__).parent.parent
         
         # Server configuration
-        self.host = os.getenv("API_HOST", "localhost")
+        self.host = os.getenv("API_HOST", "0.0.0.0")  # Bind to all interfaces for SSH forwarding
         self.port = int(os.getenv("API_PORT", "2025"))
         
         # Device configuration

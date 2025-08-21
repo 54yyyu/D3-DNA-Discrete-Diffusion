@@ -47,11 +47,8 @@ class GenerationService:
             
             model_data = model_loader.get_model(request.dataset, architecture)
             
-            # Determine if this is evaluation or pure sampling
-            is_evaluation = (request.include_oracle or request.include_sp_mse or 
-                           request.specific_indices or request.max_samples)
-            
-            if is_evaluation:
+            # Determine mode based on request
+            if request.mode == "evaluation":
                 return await self._generate_with_evaluation(request, model_data, dataset_config, architecture, start_time)
             else:
                 return await self._generate_pure_sampling(request, model_data, dataset_config, architecture, start_time)
@@ -103,7 +100,7 @@ class GenerationService:
                 sequence_length=sequence_length,
                 num_steps=steps,
                 dataset_name=request.dataset,
-                architecture=request.architecture,
+                architecture=architecture,
                 split=split,
                 save_oracle_mse=request.include_oracle,
                 device=model_data["device"]
@@ -202,7 +199,7 @@ class GenerationService:
                 sequence_length=sequence_length,
                 num_steps=steps,
                 dataset_name=request.dataset,
-                architecture=request.architecture,
+                architecture=architecture,
                 split=None,  # Pure sampling
                 save_oracle_mse=False,  # No oracle for pure sampling
                 device=model_data["device"]

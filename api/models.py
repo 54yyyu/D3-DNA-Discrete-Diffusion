@@ -13,6 +13,7 @@ class GenerationRequest(BaseModel):
     num_samples: int = Field(default=100, ge=1, le=1000, description="Number of sequences to generate")
     steps: int = Field(default=249, ge=1, le=500, description="Number of sampling steps")
     dataset: str = Field(default="deepstarr", description="Dataset to use for generation")
+    mode: str = Field(default="sampling", pattern="^(sampling|evaluation)$", description="Generation mode: 'sampling' or 'evaluation'")
     
     # DeepSTARR conditioning options
     dev_activity: Optional[float] = Field(default=None, description="Dev enhancer activity value")
