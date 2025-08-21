@@ -60,7 +60,15 @@ class VisualizationFormatter:
         
         # Add optional metadata arrays
         if hasattr(viz_logger, 'original_samples') and viz_logger.original_samples is not None:
-            metadata.original_samples = VisualizationFormatter._tensor_to_list(viz_logger.original_samples)
+            # Convert one-hot encoded original samples to integer tokens
+            original_samples_tensor = viz_logger.original_samples
+            if original_samples_tensor.dim() == 3 and original_samples_tensor.shape[-1] == 4:
+                # One-hot encoded: convert to integer tokens
+                original_samples_tokens = torch.argmax(original_samples_tensor, dim=-1)
+                metadata.original_samples = VisualizationFormatter._tensor_to_list(original_samples_tokens)
+            else:
+                # Already integer tokens
+                metadata.original_samples = VisualizationFormatter._tensor_to_list(original_samples_tensor)
             
         if hasattr(viz_logger, 'ground_truth_labels') and viz_logger.ground_truth_labels is not None:
             metadata.ground_truth_labels = VisualizationFormatter._tensor_to_list(viz_logger.ground_truth_labels)
