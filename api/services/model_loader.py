@@ -24,6 +24,8 @@ class ModelLoader:
         self.device = device if torch.cuda.is_available() else "cpu"
         self.loaded_models: Dict[str, Dict[str, Any]] = {}
         self.loading_times: Dict[str, float] = {}
+        self.cached_datasets: Dict[str, torch.Tensor] = {}  # Cache for original test data
+        self.cached_dataset_objects: Dict[str, Any] = {}  # Cache for dataset objects
         
         print(f"ModelLoader initialized on device: {self.device}")
         if self.device == "cuda":
@@ -192,6 +194,26 @@ class ModelLoader:
         
         return status
     
+    def get_cached_dataset(self, data_path: str, dataset_indices=None) -> Optional[torch.Tensor]:
+        """Get cached original test data"""
+        cache_key = f"{data_path}_{hash(str(dataset_indices)) if dataset_indices else 'full'}"
+        return self.cached_datasets.get(cache_key)
+    
+    def cache_dataset(self, data_path: str, data: torch.Tensor, dataset_indices=None):
+        """Cache original test data"""
+        cache_key = f"{data_path}_{hash(str(dataset_indices)) if dataset_indices else 'full'}"
+        self.cached_datasets[cache_key] = data
+        print(f"✓ Cached dataset: {cache_key} ({data.shape[0]} samples)")
+    
+    def get_cached_dataset_objects(self, h5_file_path: str):
+        """Get cached dataset objects (train, val, test)"""
+        return self.cached_dataset_objects.get(h5_file_path)
+    
+    def cache_dataset_objects(self, h5_file_path: str, train_ds, val_ds, test_ds):
+        """Cache dataset objects"""
+        self.cached_dataset_objects[h5_file_path] = (train_ds, val_ds, test_ds)
+        print(f"✓ Cached dataset objects for: {h5_file_path}")
+    
     def cleanup(self):
         """Clean up loaded models to free memory"""
         for key in self.loaded_models:
@@ -199,11 +221,13 @@ class ModelLoader:
                 del self.loaded_models[key]["model"]
                 
         self.loaded_models.clear()
+        self.cached_datasets.clear()  # Also clear dataset cache
+        self.cached_dataset_objects.clear()  # Also clear dataset object cache
         
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             
-        print("Model cache cleared")
+        print("Model and dataset cache cleared")
 
 
 # Global model loader instance

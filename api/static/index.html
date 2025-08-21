@@ -2212,7 +2212,21 @@
                 }
                 
                 const visualizerData = {
-                    metadata: backendData.metadata,
+                    metadata: {
+                        ...backendData.metadata,
+                        // Ensure all required metadata fields exist
+                        num_samples: backendData.metadata.num_samples,
+                        sequence_length: backendData.metadata.sequence_length,
+                        total_steps: backendData.metadata.total_steps,
+                        dataset: backendData.metadata.dataset,
+                        architecture: backendData.metadata.architecture || 'unknown',
+                        // Copy optional metadata fields
+                        original_samples: backendData.metadata.original_samples || null,
+                        ground_truth_labels: backendData.metadata.ground_truth_labels || null,
+                        ground_truth_predictions: backendData.metadata.ground_truth_predictions || null,
+                        dataset_indices: backendData.metadata.dataset_indices || null,
+                        save_oracle_mse: backendData.metadata.save_oracle_mse || false
+                    },
                     steps: backendData.steps.map(step => ({
                         step: step.step,
                         timestep: step.timestep,
@@ -2222,10 +2236,12 @@
                         score_matrices: step.score_matrices || [],
                         prob_matrices: step.prob_matrices || null,
                         attribution_matrices: step.attribution_matrices || null,
-                        oracle_mses: step.oracle_mses || []
+                        oracle_mses: step.oracle_mses || [],
+                        oracle_predictions: step.oracle_predictions || null
                     }))
                 };
 
+                // Add final sequences as a separate field (for download/reference)
                 if (backendData.final_sequences) {
                     visualizerData.final_sequences = backendData.final_sequences;
                 }

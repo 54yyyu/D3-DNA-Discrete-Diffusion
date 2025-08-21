@@ -20,6 +20,7 @@ from model_zoo.deepstarr.sample import DeepSTARRSampler
 from utils.visualization_logger import create_visualization_logger
 from .model_loader import model_loader
 from .visualization import VisualizationFormatter
+from .cached_datasets import get_deepstarr_datasets_cached
 from ..models import GenerationRequest, GenerationResponse
 
 
@@ -83,95 +84,104 @@ class GenerationService:
             return model_data.get("oracle")
         evaluator.load_oracle_model = mock_load_oracle
         
-        # Set configuration
-        config = model_data["config"]
+        # Override dataset loading to use cached datasets
+        import model_zoo.deepstarr.data as deepstarr_data
+        original_get_datasets = deepstarr_data.get_deepstarr_datasets
+        deepstarr_data.get_deepstarr_datasets = get_deepstarr_datasets_cached
         
-        # Determine split and sampling parameters
-        split = "test"  # Default for evaluation
-        steps = request.steps if request.steps != 249 else evaluator.get_sequence_length(config)
-        
-        # For evaluation mode, create a proper dataloader from the dataset
-        # This will sample from the actual test set with proper indices
-        dataloader = evaluator.create_dataloader(
-            config=config, 
-            split=split, 
-            batch_size=request.num_samples,  # Use num_samples as batch size
-            max_samples=request.num_samples,  # Limit to requested number of samples
-            specific_indices=request.specific_indices
-        )
-        
-        # Create visualization logger if requested (after dataloader to get proper sample count)
-        viz_logger = None
-        if request.include_visualization:
-            sequence_length = evaluator.get_sequence_length(config)
-            actual_samples = len(dataloader.dataset)
+        try:
+            # Set configuration
+            config = model_data["config"]
             
-            viz_logger = create_visualization_logger(
-                num_samples=actual_samples,
-                sequence_length=sequence_length,
+            # Determine split and sampling parameters
+            split = "test"  # Default for evaluation
+            steps = request.steps if request.steps != 249 else evaluator.get_sequence_length(config)
+            
+            # For evaluation mode, create a proper dataloader from the dataset
+            # This will sample from the actual test set with proper indices
+            dataloader = evaluator.create_dataloader(
+                config=config, 
+                split=split, 
+                batch_size=request.num_samples,  # Use num_samples as batch size
+                max_samples=request.num_samples,  # Limit to requested number of samples
+                specific_indices=request.specific_indices
+            )
+            
+            # Create visualization logger if requested (after dataloader to get proper sample count)
+            viz_logger = None
+            if request.include_visualization:
+                sequence_length = evaluator.get_sequence_length(config)
+                actual_samples = len(dataloader.dataset)
+                
+                viz_logger = create_visualization_logger(
+                    num_samples=actual_samples,
+                    sequence_length=sequence_length,
+                    num_steps=steps,
+                    dataset_name=request.dataset,
+                    architecture=architecture,
+                    split=split,
+                    save_oracle_mse=request.include_oracle,  # Re-enable oracle MSE since we have proper indices now
+                    device=model_data["device"],
+                    dataset_indices=getattr(evaluator, '_dataset_indices', None)  # Pass the dataset indices
+                )
+            
+            # Sample sequences with evaluation
+            sampled_sequences, target_labels = evaluator.sample_sequences_for_evaluation(
+                checkpoint_path=checkpoint_path,
+                config=config,
+                dataloader=dataloader,
                 num_steps=steps,
-                dataset_name=request.dataset,
                 architecture=architecture,
-                split=split,
-                save_oracle_mse=request.include_oracle,  # Re-enable oracle MSE since we have proper indices now
-                device=model_data["device"],
-                dataset_indices=getattr(evaluator, '_dataset_indices', None)  # Pass the dataset indices
+                show_progress=False,
+                viz_logger=viz_logger,
+                oracle_model=model_data.get("oracle"),
+                data_path=str(dataset_config.get("data_file", ""))
             )
-        
-        # Sample sequences with evaluation
-        sampled_sequences, target_labels = evaluator.sample_sequences_for_evaluation(
-            checkpoint_path=checkpoint_path,
-            config=config,
-            dataloader=dataloader,
-            num_steps=steps,
-            architecture=architecture,
-            show_progress=False,
-            viz_logger=viz_logger,
-            oracle_model=model_data.get("oracle"),
-            data_path=str(dataset_config.get("data_file", ""))
-        )
-        
-        # Compute SP-MSE if requested and oracle available
-        sp_mse = None
-        if request.include_sp_mse and model_data.get("oracle"):
-            try:
-                # Get original test data matching the same indices used in evaluation
-                original_data = evaluator.get_original_test_data(str(dataset_config.get("data_file", "")))
-                sp_mse = evaluator.compute_sp_mse(sampled_sequences, model_data["oracle"], original_data)
-                print(f"SP-MSE computed: {sp_mse:.6f}")
-            except Exception as e:
-                print(f"SP-MSE computation failed: {e}")
-                sp_mse = None
-        
-        generation_time = time.time() - start_time
-        
-        # Format response
-        if viz_logger and request.include_visualization:
-            response_data = VisualizationFormatter.format_complete_response(
-                sampled_sequences, viz_logger, request.dataset, architecture,
-                generation_time, sp_mse, split
-            )
-        else:
-            # Basic response without visualization data
-            sequences_str = VisualizationFormatter.sequences_to_strings(sampled_sequences)
-            response_data = {
-                "final_sequences": sequences_str,
-                "generation_time": generation_time,
-                "metadata": {
-                    "dataset": request.dataset,
-                    "num_samples": request.num_samples,
-                    "sequence_length": sampled_sequences.shape[1],
-                    "total_steps": steps,
-                    "save_oracle_mse": request.include_oracle
-                },
-                "steps": []
-            }
             
-            if sp_mse is not None:
-                response_data["sp_mse"] = sp_mse
-                response_data["oracle_evaluation"] = "completed"
+            # Compute SP-MSE if requested and oracle available
+            sp_mse = None
+            if request.include_sp_mse and model_data.get("oracle"):
+                try:
+                    # Get original test data matching the same indices used in evaluation
+                    original_data = evaluator.get_original_test_data(str(dataset_config.get("data_file", "")))
+                    sp_mse = evaluator.compute_sp_mse(sampled_sequences, model_data["oracle"], original_data)
+                    print(f"SP-MSE computed: {sp_mse:.6f}")
+                except Exception as e:
+                    print(f"SP-MSE computation failed: {e}")
+                    sp_mse = None
+            
+            generation_time = time.time() - start_time
+            
+            # Format response
+            if viz_logger and request.include_visualization:
+                response_data = VisualizationFormatter.format_complete_response(
+                    sampled_sequences, viz_logger, request.dataset, architecture,
+                    generation_time, sp_mse, split
+                )
+            else:
+                # Basic response without visualization data
+                sequences_str = VisualizationFormatter.sequences_to_strings(sampled_sequences)
+                response_data = {
+                    "final_sequences": sequences_str,
+                    "generation_time": generation_time,
+                    "metadata": {
+                        "dataset": request.dataset,
+                        "num_samples": request.num_samples,
+                        "sequence_length": sampled_sequences.shape[1],
+                        "total_steps": steps,
+                        "save_oracle_mse": request.include_oracle
+                    },
+                    "steps": []
+                }
+                
+                if sp_mse is not None:
+                    response_data["sp_mse"] = sp_mse
+                    response_data["oracle_evaluation"] = "completed"
         
-        return GenerationResponse(**response_data)
+            return GenerationResponse(**response_data)
+        finally:
+            # Restore original function
+            deepstarr_data.get_deepstarr_datasets = original_get_datasets
     
     async def _generate_pure_sampling(self, request: GenerationRequest,
                                     model_data: Dict[str, Any],
