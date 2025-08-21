@@ -102,7 +102,7 @@ class GenerationService:
                 dataset_name=request.dataset,
                 architecture=architecture,
                 split=split,
-                save_oracle_mse=request.include_oracle,
+                save_oracle_mse=False,  # Disable oracle MSE during sampling to avoid tensor size issues
                 device=model_data["device"]
             )
         

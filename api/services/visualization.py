@@ -100,9 +100,31 @@ class VisualizationFormatter:
         """Convert token sequences to DNA strings"""
         token_to_nucleotide = {0: 'A', 1: 'C', 2: 'G', 3: 'T'}
         
+        # Ensure sequences is 2D (batch_size, seq_length)
+        if sequences.dim() == 1:
+            sequences = sequences.unsqueeze(0)
+        elif sequences.dim() > 2:
+            # If it's one-hot encoded (batch_size, seq_length, 4), convert to indices
+            if sequences.shape[-1] == 4:
+                sequences = torch.argmax(sequences, dim=-1)
+            else:
+                sequences = sequences.view(-1, sequences.shape[-1])
+        
         sequences_str = []
         for seq in sequences:
-            seq_str = ''.join([token_to_nucleotide.get(token.item(), 'N') for token in seq])
+            # Handle each token in the sequence
+            tokens = []
+            for token in seq:
+                if isinstance(token, torch.Tensor):
+                    if token.numel() == 1:
+                        tokens.append(token_to_nucleotide.get(token.item(), 'N'))
+                    else:
+                        # If token is still multi-dimensional, take the first element
+                        tokens.append(token_to_nucleotide.get(token.flatten()[0].item(), 'N'))
+                else:
+                    tokens.append(token_to_nucleotide.get(int(token), 'N'))
+            
+            seq_str = ''.join(tokens)
             sequences_str.append(seq_str)
         
         return sequences_str
