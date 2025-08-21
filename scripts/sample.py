@@ -157,33 +157,52 @@ class BaseSampler:
         batch_size = min(32, num_samples)  # Standard batch size used in evaluation
         sampled_sequences_list = []
         
+        print(f"🔍 SAMPLING DEBUG: total samples={num_samples}, batch_size={batch_size}, sequence_length={sequence_length}")
+        if conditioning_labels is not None:
+            print(f"🔍 SAMPLING DEBUG: conditioning_labels shape={conditioning_labels.shape}")
+        
         remaining_samples = num_samples
         label_start_idx = 0
+        batch_idx = 0
         
         while remaining_samples > 0:
             current_batch_size = min(batch_size, remaining_samples)
+            print(f"🔍 SAMPLING DEBUG: Processing batch {batch_idx}, current_batch_size={current_batch_size}, remaining={remaining_samples}")
             
             # Get labels for this batch
             if conditioning_labels is not None:
                 batch_labels = conditioning_labels[label_start_idx:label_start_idx + current_batch_size]
+                print(f"🔍 SAMPLING DEBUG: batch_labels shape={batch_labels.shape}")
             else:
                 batch_labels = None
+                print(f"🔍 SAMPLING DEBUG: batch_labels=None (unconditional)")
             
             # Create PC sampler for this batch (same pattern as evaluation)
+            print(f"🔍 SAMPLING DEBUG: Creating PC sampler with batch_dims=({current_batch_size}, {sequence_length})")
             sampling_fn = sampling.get_pc_sampler(
                 graph, noise, (current_batch_size, sequence_length), 'analytic', steps, 
                 device=self.device, viz_logger=viz_logger
             )
             
-            # Sample this batch
-            batch_sequences = sampling_fn(model, batch_labels.to(self.device) if batch_labels is not None else None)
-            sampled_sequences_list.append(batch_sequences)
+            print(f"🔍 SAMPLING DEBUG: About to call sampling_fn...")
+            try:
+                # Sample this batch
+                batch_sequences = sampling_fn(model, batch_labels.to(self.device) if batch_labels is not None else None)
+                print(f"🔍 SAMPLING DEBUG: Batch {batch_idx} successful, batch_sequences shape={batch_sequences.shape}")
+                sampled_sequences_list.append(batch_sequences)
+            except Exception as e:
+                print(f"🔍 SAMPLING DEBUG: Error in batch {batch_idx}: {e}")
+                print(f"🔍 SAMPLING DEBUG: batch_labels device/shape: {batch_labels.device if batch_labels is not None else 'None'}/{batch_labels.shape if batch_labels is not None else 'None'}")
+                raise e
             
             remaining_samples -= current_batch_size
             label_start_idx += current_batch_size
+            batch_idx += 1
         
+        print(f"🔍 SAMPLING DEBUG: All batches completed, concatenating {len(sampled_sequences_list)} batches")
         # Concatenate all batches
         sampled_sequences = torch.cat(sampled_sequences_list, dim=0)
+        print(f"🔍 SAMPLING DEBUG: Final sampled_sequences shape={sampled_sequences.shape}")
         
         return sampled_sequences
     
