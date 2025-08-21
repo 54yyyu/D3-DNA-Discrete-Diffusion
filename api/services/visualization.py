@@ -23,7 +23,7 @@ class VisualizationFormatter:
                 step=step_info.get('step', i),
                 timestep=float(step_info.get('timestep', 0.0)),
                 noise_level=float(step_info.get('noise_level', 0.0)),
-                sequences=VisualizationFormatter._tensor_to_list(step_info.get('sequences')),
+                sequences=VisualizationFormatter._tensor_to_list(step_info.get('sequence')),
                 score_matrices=VisualizationFormatter._tensor_to_list(step_info.get('score_matrix')),
             )
             

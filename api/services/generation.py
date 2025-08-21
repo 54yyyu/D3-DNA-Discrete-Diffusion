@@ -113,6 +113,25 @@ class GenerationService:
                 sequence_length = evaluator.get_sequence_length(config)
                 actual_samples = len(dataloader.dataset)
                 
+                # Get original test data for visualization
+                original_data = None
+                try:
+                    original_data = evaluator.get_original_test_data(str(dataset_config.get("data_file", "")))
+                except Exception as e:
+                    print(f"Warning: Could not load original data for visualization: {e}")
+                
+                # Get ground truth labels if available
+                ground_truth_labels = None
+                if hasattr(dataloader.dataset, 'targets') and dataloader.dataset.targets is not None:
+                    # Extract the labels for the selected samples
+                    if hasattr(evaluator, '_dataset_indices') and evaluator._dataset_indices is not None:
+                        try:
+                            # Get all targets and then select subset
+                            all_targets = dataloader.dataset.dataset.targets if hasattr(dataloader.dataset, 'dataset') else dataloader.dataset.targets
+                            ground_truth_labels = all_targets[evaluator._dataset_indices]
+                        except Exception as e:
+                            print(f"Warning: Could not extract ground truth labels: {e}")
+                
                 viz_logger = create_visualization_logger(
                     num_samples=actual_samples,
                     sequence_length=sequence_length,
@@ -120,9 +139,11 @@ class GenerationService:
                     dataset_name=request.dataset,
                     architecture=architecture,
                     split=split,
-                    save_oracle_mse=request.include_oracle,  # Re-enable oracle MSE since we have proper indices now
+                    save_oracle_mse=request.include_oracle,
                     device=model_data["device"],
-                    dataset_indices=getattr(evaluator, '_dataset_indices', None)  # Pass the dataset indices
+                    original_samples=original_data,
+                    ground_truth_labels=ground_truth_labels,
+                    dataset_indices=getattr(evaluator, '_dataset_indices', None)
                 )
             
             # Sample sequences with evaluation

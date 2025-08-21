@@ -2211,28 +2211,15 @@
                     throw new Error('Invalid backend data structure');
                 }
                 
+                // The backend provides sequences as integer arrays already, so keep them as-is
                 const visualizerData = {
-                    metadata: {
-                        ...backendData.metadata,
-                        // Ensure all required metadata fields exist
-                        num_samples: backendData.metadata.num_samples,
-                        sequence_length: backendData.metadata.sequence_length,
-                        total_steps: backendData.metadata.total_steps,
-                        dataset: backendData.metadata.dataset,
-                        architecture: backendData.metadata.architecture || 'unknown',
-                        // Copy optional metadata fields
-                        original_samples: backendData.metadata.original_samples || null,
-                        ground_truth_labels: backendData.metadata.ground_truth_labels || null,
-                        ground_truth_predictions: backendData.metadata.ground_truth_predictions || null,
-                        dataset_indices: backendData.metadata.dataset_indices || null,
-                        save_oracle_mse: backendData.metadata.save_oracle_mse || false
-                    },
+                    metadata: backendData.metadata, // Keep all metadata as-is from backend
                     steps: backendData.steps.map(step => ({
                         step: step.step,
                         timestep: step.timestep,
                         noise_level: step.noise_level,
                         noise_rate: step.noise_rate || 0,
-                        sequences: step.sequences || [],
+                        sequences: step.sequences || [], // These should already be integer arrays
                         score_matrices: step.score_matrices || [],
                         prob_matrices: step.prob_matrices || null,
                         attribution_matrices: step.attribution_matrices || null,
