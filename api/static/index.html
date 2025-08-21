@@ -2134,14 +2134,12 @@
                     }
 
                     const data = await response.json();
-                    console.log('Received data from backend:', data);
 
                     // Close modal first
                     this.closeGenerateModal();
 
                     // Convert backend data format to visualizer format
                     const visualizerData = this.convertBackendDataToVisualizerFormat(data);
-                    console.log('Converted data for visualizer:', visualizerData);
 
                     // Load the generated data into the visualizer
                     this.data = visualizerData;
@@ -2152,15 +2150,7 @@
 
                 } catch (error) {
                     console.error('Error generating data:', error);
-                    console.error('Error stack:', error.stack);
-                    
-                    // Show more specific error message
-                    let errorMessage = error.message;
-                    if (errorMessage.includes('forEach')) {
-                        errorMessage = 'Data format error: Please check the console for details';
-                    }
-                    
-                    alert(`Error generating data: ${errorMessage}`);
+                    alert(`Error generating data: ${error.message}`);
                 } finally {
                     // Reset button state
                     generateBtn.textContent = originalText;
@@ -2216,71 +2206,31 @@
             }
 
             convertBackendDataToVisualizerFormat(backendData) {
-                try {
-                    console.log('Converting backend data structure:', Object.keys(backendData));
-                    
-                    // Validate required fields
-                    if (!backendData.metadata) {
-                        throw new Error('Missing metadata in backend response');
-                    }
-                    if (!backendData.steps) {
-                        throw new Error('Missing steps in backend response');
-                    }
-                    if (!Array.isArray(backendData.steps)) {
-                        throw new Error('Steps is not an array');
-                    }
-                    
-                    console.log(`Processing ${backendData.steps.length} steps`);
-                    
-                    const tokenToBase = ['A', 'C', 'G', 'T']; // Standard nucleotide mapping
-                    
-                    const visualizerData = {
-                        metadata: backendData.metadata,
-                        steps: backendData.steps.map((step, stepIndex) => {
-                            console.log(`Processing step ${stepIndex}:`, Object.keys(step));
-                            
-                            // Validate step structure
-                            if (!step.sequences) {
-                                throw new Error(`Step ${stepIndex} missing sequences`);
-                            }
-                            if (!Array.isArray(step.sequences)) {
-                                throw new Error(`Step ${stepIndex} sequences is not an array`);
-                            }
-                            
-                            return {
-                                step: step.step,
-                                timestep: step.timestep,
-                                noise_level: step.noise_level,
-                                noise_rate: step.noise_rate || 0,
-                                // Keep sequences as integer arrays (visualizer expects this format)
-                                sequences: step.sequences.map((tokenSeq, seqIndex) => {
-                                    if (!Array.isArray(tokenSeq)) {
-                                        console.warn(`Step ${stepIndex}, sequence ${seqIndex} is not an array:`, typeof tokenSeq);
-                                        return new Array(249).fill(0); // Fallback sequence of all A's
-                                    }
-                                    return tokenSeq; // Keep as integer array
-                                }),
-                                score_matrices: step.score_matrices || [],
-                                prob_matrices: step.prob_matrices || null,
-                                attribution_matrices: step.attribution_matrices || null,
-                                oracle_mses: step.oracle_mses || []
-                            };
-                        })
-                    };
-
-                    // Add final sequences as metadata (they're already strings)
-                    if (backendData.final_sequences) {
-                        visualizerData.final_sequences = backendData.final_sequences;
-                    }
-
-                    console.log('Successfully converted data for visualizer');
-                    return visualizerData;
-                    
-                } catch (error) {
-                    console.error('Error in convertBackendDataToVisualizerFormat:', error);
-                    console.error('Backend data structure:', backendData);
-                    throw error;
+                // Validate required fields
+                if (!backendData.metadata || !backendData.steps || !Array.isArray(backendData.steps)) {
+                    throw new Error('Invalid backend data structure');
                 }
+                
+                const visualizerData = {
+                    metadata: backendData.metadata,
+                    steps: backendData.steps.map(step => ({
+                        step: step.step,
+                        timestep: step.timestep,
+                        noise_level: step.noise_level,
+                        noise_rate: step.noise_rate || 0,
+                        sequences: step.sequences || [],
+                        score_matrices: step.score_matrices || [],
+                        prob_matrices: step.prob_matrices || null,
+                        attribution_matrices: step.attribution_matrices || null,
+                        oracle_mses: step.oracle_mses || []
+                    }))
+                };
+
+                if (backendData.final_sequences) {
+                    visualizerData.final_sequences = backendData.final_sequences;
+                }
+
+                return visualizerData;
             }
 
             showDownloadOption(data) {
@@ -3874,12 +3824,19 @@
                 if (!this.data) return;
                 
                 const stepData = this.data.steps[this.currentStep];
+                
+                // Ensure current sample is within bounds
+                const maxSample = stepData.sequences ? stepData.sequences.length - 1 : 0;
+                if (this.currentSample > maxSample) {
+                    this.currentSample = 0;
+                }
+                
                 const sampleData = {
-                    sequence: stepData.sequences[this.currentSample],
-                    scoreMatrix: stepData.score_matrices[this.currentSample],
-                    probMatrix: stepData.prob_matrices ? stepData.prob_matrices[this.currentSample] : null,
-                    attributionMatrix: stepData.attribution_matrices ? stepData.attribution_matrices[this.currentSample] : null,
-                    oracleMse: stepData.oracle_mses[this.currentSample]
+                    sequence: stepData.sequences && stepData.sequences[this.currentSample] ? stepData.sequences[this.currentSample] : [],
+                    scoreMatrix: stepData.score_matrices && stepData.score_matrices[this.currentSample] ? stepData.score_matrices[this.currentSample] : null,
+                    probMatrix: stepData.prob_matrices && stepData.prob_matrices[this.currentSample] ? stepData.prob_matrices[this.currentSample] : null,
+                    attributionMatrix: stepData.attribution_matrices && stepData.attribution_matrices[this.currentSample] ? stepData.attribution_matrices[this.currentSample] : null,
+                    oracleMse: stepData.oracle_mses && stepData.oracle_mses[this.currentSample] ? stepData.oracle_mses[this.currentSample] : null
                 };
                 
                 this.updateSequenceDisplay(sampleData.sequence);
@@ -3887,6 +3844,11 @@
             }
             
             updateSequenceDisplay(sequence) {
+                if (!sequence || !Array.isArray(sequence) || sequence.length === 0) {
+                    this.elements.sequenceText.innerHTML = '<span class="error">No sequence data available</span>';
+                    return;
+                }
+                
                 const baseNames = ['A', 'C', 'G', 'T'];
                 const baseClasses = ['base-A', 'base-C', 'base-G', 'base-T'];
                 
