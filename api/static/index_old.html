@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>D3-DNA Sequence Generator</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🧬 D3-DNA Sequence Generator</h1>
+            <p>Generate DNA sequences using discrete diffusion models</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Input Form -->
+            <div class="form-section">
+                <h2>Generation Parameters</h2>
+                
+                <form id="generation-form">
+                    <!-- Basic Generation -->
+                    <div class="param-group">
+                        <h3>Basic Settings</h3>
+                        
+                        <div class="form-row">
+                            <label for="num_samples">Number of Samples:</label>
+                            <input type="range" id="num_samples" name="num_samples" min="1" max="1000" value="100">
+                            <span id="num_samples_value">100</span>
+                        </div>
+                        
+                        <div class="form-row">
+                            <label for="steps">Sampling Steps:</label>
+                            <input type="range" id="steps" name="steps" min="1" max="500" value="249">
+                            <span id="steps_value">249</span>
+                        </div>
+                        
+                        
+                        <div class="form-row">
+                            <label for="dataset">Dataset:</label>
+                            <select id="dataset" name="dataset">
+                                <option value="deepstarr">DeepSTARR</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-row">
+                            <label for="mode">Mode:</label>
+                            <select id="mode" name="mode">
+                                <option value="sampling">Sampling (Pure Generation)</option>
+                                <option value="evaluation">Evaluation (Oracle + SP-MSE)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- DeepSTARR Conditioning -->
+                    <div class="param-group">
+                        <h3>DeepSTARR Conditioning</h3>
+                        
+                        <div class="form-row">
+                            <label>
+                                <input type="checkbox" id="unconditional" name="unconditional">
+                                Generate Unconditionally
+                            </label>
+                        </div>
+                        
+                        <div id="conditioning-controls">
+                            <div class="form-row">
+                                <label for="dev_activity">Dev Activity:</label>
+                                <input type="number" id="dev_activity" name="dev_activity" step="0.1" placeholder="Random if empty">
+                            </div>
+                            
+                            <div class="form-row">
+                                <label for="hk_activity">HK Activity:</label>
+                                <input type="number" id="hk_activity" name="hk_activity" step="0.1" placeholder="Random if empty">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Evaluation Options -->
+                    <div class="param-group">
+                        <h3>Evaluation Options</h3>
+                        
+                        <div class="form-row">
+                            <label>
+                                <input type="checkbox" id="include_oracle" name="include_oracle" checked>
+                                Include Oracle Predictions
+                            </label>
+                        </div>
+                        
+                        <div class="form-row">
+                            <label>
+                                <input type="checkbox" id="include_sp_mse" name="include_sp_mse" checked>
+                                Include SP-MSE
+                            </label>
+                        </div>
+                        
+                        <div class="form-row">
+                            <label for="specific_indices">Specific Indices:</label>
+                            <input type="text" id="specific_indices" name="specific_indices" placeholder="e.g., 11,12,40">
+                        </div>
+                        
+                        <div class="form-row">
+                            <label for="max_samples">Max Samples:</label>
+                            <input type="number" id="max_samples" name="max_samples" min="1" placeholder="All samples if empty">
+                        </div>
+                    </div>
+
+                    <!-- Visualization Options -->
+                    <div class="param-group">
+                        <h3>Visualization Options</h3>
+                        
+                        <div class="form-row">
+                            <label>
+                                <input type="checkbox" id="include_visualization" name="include_visualization" checked>
+                                Include Visualization Data
+                            </label>
+                        </div>
+                        
+                        <div class="form-row">
+                            <label>
+                                <input type="checkbox" id="save_intermediate_steps" name="save_intermediate_steps" checked>
+                                Save Intermediate Steps
+                            </label>
+                        </div>
+                    </div>
+
+                    <button type="submit" id="generate-btn">🧬 Generate Sequences</button>
+                </form>
+            </div>
+
+            <!-- Results Section -->
+            <div class="results-section">
+                <h2>Results</h2>
+                
+                <div id="loading" class="hidden">
+                    <div class="spinner"></div>
+                    <p>Generating sequences...</p>
+                </div>
+                
+                <div id="error-message" class="error hidden"></div>
+                
+                <div id="results" class="hidden">
+                    <!-- Metadata Preview -->
+                    <div class="result-group">
+                        <h3>📊 Generation Summary</h3>
+                        <div id="metadata-preview"></div>
+                    </div>
+
+                    <!-- Generated Sequences Preview -->
+                    <div class="result-group">
+                        <h3>🧬 Generated Sequences (First 3)</h3>
+                        <div id="sequences-preview"></div>
+                    </div>
+
+                    <!-- Step Data Preview -->
+                    <div class="result-group">
+                        <h3>⚡ Step Data (First 2 Steps)</h3>
+                        <div id="steps-preview"></div>
+                    </div>
+
+                    <!-- Oracle Predictions Preview -->
+                    <div class="result-group" id="oracle-group">
+                        <h3>🔮 Oracle Predictions (First 3)</h3>
+                        <div id="oracle-preview"></div>
+                    </div>
+
+                    <!-- Raw JSON Output -->
+                    <div class="result-group">
+                        <h3>📝 Complete JSON Response</h3>
+                        <button id="toggle-json" class="toggle-btn">Show Full JSON</button>
+                        <pre id="json-output" class="hidden"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>D3-DNA Discrete Diffusion Model API • GPU-Accelerated Sequence Generation</p>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
