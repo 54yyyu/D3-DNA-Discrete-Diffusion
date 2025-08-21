@@ -2252,13 +2252,13 @@
                                 timestep: step.timestep,
                                 noise_level: step.noise_level,
                                 noise_rate: step.noise_rate || 0,
-                                // Convert token sequences to DNA strings
+                                // Keep sequences as integer arrays (visualizer expects this format)
                                 sequences: step.sequences.map((tokenSeq, seqIndex) => {
                                     if (!Array.isArray(tokenSeq)) {
                                         console.warn(`Step ${stepIndex}, sequence ${seqIndex} is not an array:`, typeof tokenSeq);
-                                        return 'N'.repeat(249); // Fallback for invalid sequence
+                                        return new Array(249).fill(0); // Fallback sequence of all A's
                                     }
-                                    return tokenSeq.map(token => tokenToBase[token] || 'N').join('');
+                                    return tokenSeq; // Keep as integer array
                                 }),
                                 score_matrices: step.score_matrices || [],
                                 prob_matrices: step.prob_matrices || null,
