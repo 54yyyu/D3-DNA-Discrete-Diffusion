@@ -152,57 +152,44 @@ class BaseSampler:
             }
             viz_logger.update_noise_schedule_metadata(noise_config)
         
-        # Process samples in batches like evaluation mode to avoid tensor dimension issues
-        # Use same batch size approach as evaluation
-        batch_size = min(32, num_samples)  # Standard batch size used in evaluation
-        sampled_sequences_list = []
+        batch_size = min(32, num_samples) 
         
-        print(f"🔍 SAMPLING DEBUG: total samples={num_samples}, batch_size={batch_size}, sequence_length={sequence_length}")
-        if conditioning_labels is not None:
-            print(f"🔍 SAMPLING DEBUG: conditioning_labels shape={conditioning_labels.shape}")
+        # Create PC sampler once (exactly like evaluation mode)
+        sampling_fn = sampling.get_pc_sampler(
+            graph, noise, (batch_size, sequence_length), 'analytic', steps, 
+            device=self.device, viz_logger=viz_logger
+        )
         
-        remaining_samples = num_samples
-        label_start_idx = 0
-        batch_idx = 0
+        sampled_sequences = []
         
-        while remaining_samples > 0:
-            current_batch_size = min(batch_size, remaining_samples)
-            print(f"🔍 SAMPLING DEBUG: Processing batch {batch_idx}, current_batch_size={current_batch_size}, remaining={remaining_samples}")
+        # Process in batches exactly like evaluation mode
+        for batch_start in range(0, num_samples, batch_size):
+            batch_end = min(batch_start + batch_size, num_samples)
+            current_batch_size = batch_end - batch_start
             
-            # Get labels for this batch
+            # Get targets for this batch (synthetic instead of from dataloader)
             if conditioning_labels is not None:
-                batch_labels = conditioning_labels[label_start_idx:label_start_idx + current_batch_size]
-                print(f"🔍 SAMPLING DEBUG: batch_labels shape={batch_labels.shape}")
+                targets = conditioning_labels[batch_start:batch_end]
             else:
-                batch_labels = None
-                print(f"🔍 SAMPLING DEBUG: batch_labels=None (unconditional)")
+                targets = None
             
-            # Create PC sampler for this batch (same pattern as evaluation)
-            print(f"🔍 SAMPLING DEBUG: Creating PC sampler with batch_dims=({current_batch_size}, {sequence_length})")
-            sampling_fn = sampling.get_pc_sampler(
-                graph, noise, (current_batch_size, sequence_length), 'analytic', steps, 
-                device=self.device, viz_logger=viz_logger
-            )
+            # If last batch has different size, create new sampling function (exactly like evaluation)
+            if current_batch_size != batch_size:
+                sampling_fn = sampling.get_pc_sampler(
+                    graph, noise, (current_batch_size, sequence_length), 'analytic', steps, 
+                    device=self.device, viz_logger=viz_logger
+                )
             
-            print(f"🔍 SAMPLING DEBUG: About to call sampling_fn...")
-            try:
-                # Sample this batch
-                batch_sequences = sampling_fn(model, batch_labels.to(self.device) if batch_labels is not None else None)
-                print(f"🔍 SAMPLING DEBUG: Batch {batch_idx} successful, batch_sequences shape={batch_sequences.shape}")
-                sampled_sequences_list.append(batch_sequences)
-            except Exception as e:
-                print(f"🔍 SAMPLING DEBUG: Error in batch {batch_idx}: {e}")
-                print(f"🔍 SAMPLING DEBUG: batch_labels device/shape: {batch_labels.device if batch_labels is not None else 'None'}/{batch_labels.shape if batch_labels is not None else 'None'}")
-                raise e
-            
-            remaining_samples -= current_batch_size
-            label_start_idx += current_batch_size
-            batch_idx += 1
+            # Sample sequences conditioned on targets (exactly like evaluation line 198)
+            sample = sampling_fn(model, targets.to(self.device) if targets is not None else None)
+            seq_pred_one_hot = F.one_hot(sample, num_classes=4).float()
+            sampled_sequences.append(seq_pred_one_hot)
         
-        print(f"🔍 SAMPLING DEBUG: All batches completed, concatenating {len(sampled_sequences_list)} batches")
-        # Concatenate all batches
-        sampled_sequences = torch.cat(sampled_sequences_list, dim=0)
-        print(f"🔍 SAMPLING DEBUG: Final sampled_sequences shape={sampled_sequences.shape}")
+        # Concatenate all samples (exactly like evaluation)
+        all_samples = torch.cat(sampled_sequences, dim=0)
+        
+        # Return just the token indices (convert back from one-hot)
+        sampled_sequences = torch.argmax(all_samples, dim=-1)
         
         return sampled_sequences
     

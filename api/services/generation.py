@@ -228,16 +228,10 @@ class GenerationService:
         
         # Generate conditioning labels
         conditioning_labels = self._generate_conditioning_labels(request, model_data["device"])
-        print(f"🔍 API DEBUG: Generated conditioning labels")
-        if conditioning_labels is not None:
-            print(f"🔍 API DEBUG: conditioning_labels shape={conditioning_labels.shape}, device={conditioning_labels.device}")
-        else:
-            print(f"🔍 API DEBUG: conditioning_labels=None (unconditional)")
         
         # Create visualization logger if requested
         viz_logger = None
         if request.include_visualization:
-            print(f"🔍 API DEBUG: Creating visualization logger...")
             viz_logger = create_visualization_logger(
                 num_samples=request.num_samples,
                 sequence_length=sequence_length,
@@ -248,31 +242,17 @@ class GenerationService:
                 save_oracle_mse=False,  # No oracle for pure sampling
                 device=model_data["device"]
             )
-            print(f"🔍 API DEBUG: Visualization logger created successfully")
         
         # Sample sequences
-        print(f"🔍 API DEBUG: About to call sampler.sample_sequences_with_pc_sampler")
-        print(f"🔍 API DEBUG: num_samples={request.num_samples}, steps={steps}, sequence_length={sequence_length}")
-        print(f"🔍 API DEBUG: model device={model_data['device']}")
-        
-        try:
-            sampled_sequences = sampler.sample_sequences_with_pc_sampler(
-                checkpoint_path="dummy_path",  # Not used
-                config=config,
-                num_samples=request.num_samples,
-                steps=steps,
-                architecture=architecture,
-                conditioning_labels=conditioning_labels,
-                viz_logger=viz_logger
-            )
-            print(f"🔍 API DEBUG: sampler.sample_sequences_with_pc_sampler completed successfully")
-            print(f"🔍 API DEBUG: sampled_sequences shape={sampled_sequences.shape}")
-        except Exception as e:
-            print(f"🔍 API DEBUG: Error in sampler.sample_sequences_with_pc_sampler: {e}")
-            print(f"🔍 API DEBUG: Error type: {type(e)}")
-            import traceback
-            print(f"🔍 API DEBUG: Traceback: {traceback.format_exc()}")
-            raise e
+        sampled_sequences = sampler.sample_sequences_with_pc_sampler(
+            checkpoint_path="dummy_path",  # Not used
+            config=config,
+            num_samples=request.num_samples,
+            steps=steps,
+            architecture=architecture,
+            conditioning_labels=conditioning_labels,
+            viz_logger=viz_logger
+        )
         
         generation_time = time.time() - start_time
         
