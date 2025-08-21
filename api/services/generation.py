@@ -90,27 +90,33 @@ class GenerationService:
         split = "test"  # Default for evaluation
         steps = request.steps if request.steps != 249 else evaluator.get_sequence_length(config)
         
-        # Create visualization logger if requested
+        # For evaluation mode, create a proper dataloader from the dataset
+        # This will sample from the actual test set with proper indices
+        dataloader = evaluator.create_dataloader(
+            config=config, 
+            split=split, 
+            batch_size=request.num_samples,  # Use num_samples as batch size
+            max_samples=request.num_samples,  # Limit to requested number of samples
+            specific_indices=request.specific_indices
+        )
+        
+        # Create visualization logger if requested (after dataloader to get proper sample count)
         viz_logger = None
         if request.include_visualization:
             sequence_length = evaluator.get_sequence_length(config)
+            actual_samples = len(dataloader.dataset)
             
             viz_logger = create_visualization_logger(
-                num_samples=request.num_samples,
+                num_samples=actual_samples,
                 sequence_length=sequence_length,
                 num_steps=steps,
                 dataset_name=request.dataset,
                 architecture=architecture,
                 split=split,
-                save_oracle_mse=False,  # Disable oracle MSE during sampling to avoid tensor size issues
-                device=model_data["device"]
+                save_oracle_mse=request.include_oracle,  # Re-enable oracle MSE since we have proper indices now
+                device=model_data["device"],
+                dataset_indices=getattr(evaluator, '_dataset_indices', None)  # Pass the dataset indices
             )
-        
-        # Generate conditioning labels
-        conditioning_labels = self._generate_conditioning_labels(request, model_data["device"])
-        
-        # Create custom dataloader that yields our conditioning labels
-        dataloader = self._create_conditioning_dataloader(conditioning_labels, config)
         
         # Sample sequences with evaluation
         sampled_sequences, target_labels = evaluator.sample_sequences_for_evaluation(
@@ -129,9 +135,10 @@ class GenerationService:
         sp_mse = None
         if request.include_sp_mse and model_data.get("oracle"):
             try:
-                # For pure generation, we don't have original data to compare against
-                # So we skip SP-MSE computation or use a dummy comparison
-                sp_mse = 0.0  # Placeholder
+                # Get original test data matching the same indices used in evaluation
+                original_data = evaluator.get_original_test_data(str(dataset_config.get("data_file", "")))
+                sp_mse = evaluator.compute_sp_mse(sampled_sequences, model_data["oracle"], original_data)
+                print(f"SP-MSE computed: {sp_mse:.6f}")
             except Exception as e:
                 print(f"SP-MSE computation failed: {e}")
                 sp_mse = None
@@ -263,15 +270,6 @@ class GenerationService:
         # Default: random conditioning
         return torch.randn(request.num_samples, 2, device=device)
     
-    def _create_conditioning_dataloader(self, conditioning_labels: torch.Tensor, config: OmegaConf):
-        """Create a simple dataloader that yields conditioning labels"""
-        from torch.utils.data import DataLoader, TensorDataset
-        
-        # Create dummy sequences (not used in generation, just for dataloader structure)
-        dummy_sequences = torch.zeros(conditioning_labels.shape[0], dtype=torch.long)
-        
-        dataset = TensorDataset(dummy_sequences, conditioning_labels)
-        return DataLoader(dataset, batch_size=len(dataset), shuffle=False)
 
 
 # Global generation service instance
