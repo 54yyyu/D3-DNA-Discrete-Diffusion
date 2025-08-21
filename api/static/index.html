@@ -4957,13 +4957,24 @@
                 
                 // Calculate changes for each subsequent step
                 for (let stepIndex = 1; stepIndex < this.data.steps.length; stepIndex++) {
-                    const currentSequence = this.data.steps[stepIndex].sequences[sampleIndex];
-                    const previousSequence = this.data.steps[stepIndex - 1].sequences[sampleIndex];
+                    const currentStep = this.data.steps[stepIndex];
+                    const previousStep = this.data.steps[stepIndex - 1];
+                    
+                    // Check if sequences exist and sample index is valid
+                    if (!currentStep.sequences || !previousStep.sequences ||
+                        !currentStep.sequences[sampleIndex] || !previousStep.sequences[sampleIndex]) {
+                        changes.push(0); // No data, assume no changes
+                        continue;
+                    }
+                    
+                    const currentSequence = currentStep.sequences[sampleIndex];
+                    const previousSequence = previousStep.sequences[sampleIndex];
                     
                     let changeCount = 0;
                     
                     // Compare each nucleotide position
-                    for (let i = 0; i < currentSequence.length; i++) {
+                    const minLength = Math.min(currentSequence.length, previousSequence.length);
+                    for (let i = 0; i < minLength; i++) {
                         if (currentSequence[i] !== previousSequence[i]) {
                             changeCount++;
                         }
@@ -4985,8 +4996,18 @@
                 
                 // Calculate score changes for each subsequent step
                 for (let stepIndex = 1; stepIndex < this.data.steps.length; stepIndex++) {
-                    const currentScoreMatrix = this.data.steps[stepIndex].score_matrices[sampleIndex];
-                    const previousScoreMatrix = this.data.steps[stepIndex - 1].score_matrices[sampleIndex];
+                    const currentStep = this.data.steps[stepIndex];
+                    const previousStep = this.data.steps[stepIndex - 1];
+                    
+                    // Check if score matrices exist and sample index is valid
+                    if (!currentStep.score_matrices || !previousStep.score_matrices ||
+                        !currentStep.score_matrices[sampleIndex] || !previousStep.score_matrices[sampleIndex]) {
+                        changes.push(0); // No data, assume no changes
+                        continue;
+                    }
+                    
+                    const currentScoreMatrix = currentStep.score_matrices[sampleIndex];
+                    const previousScoreMatrix = previousStep.score_matrices[sampleIndex];
                     
                     let totalChange = 0;
                     let positionCount = 0;
@@ -5040,7 +5061,9 @@
                 if (!this.data) return;
                 
                 const steps = this.data.steps.map(step => step.step);
-                const mseData = this.data.steps.map(step => step.oracle_mses[this.currentSample]);
+                const mseData = this.data.steps.map(step => 
+                    step.oracle_mses && step.oracle_mses[this.currentSample] ? step.oracle_mses[this.currentSample] : 0
+                );
                 const noiseData = this.data.steps.map(step => step.noise_level);
                 const scoreChangeData = this.calculateScoreChanges(this.currentSample);
                 const changesData = this.calculateNucleotideChanges(this.currentSample);
