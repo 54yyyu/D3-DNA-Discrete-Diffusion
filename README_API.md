@@ -18,7 +18,7 @@ pip install -r requirements.txt
 python run_api.py
 
 # Or with custom options
-python run_api.py --host 0.0.0.0 --port 3000
+python run_api.py --host 0.0.0.0 --port 2025
 ```
 
 ### 3. Access the Interface
@@ -31,7 +31,7 @@ python run_api.py --host 0.0.0.0 --port 3000
 
 ```bash
 # On your local machine
-ssh -L 2025:localhost:2025 user@gpu-server
+ssh -N -L 2025:localhost:2025 user@gpu-server
 
 # Then open http://localhost:2025 in your browser
 ```
