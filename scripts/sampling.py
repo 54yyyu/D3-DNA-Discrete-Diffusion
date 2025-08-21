@@ -177,12 +177,14 @@ def get_pc_sampler(graph, noise, batch_dims, predictor, steps, denoise=True, eps
             
             # Capture final denoising step for visualization
             if viz_logger is not None:
-                sigma = noise(t.squeeze())[0]
-                score_matrix = sampling_score_fn(x, sigma, labels)
+                curr_sigma = noise(t)[0]
+                score_matrix = sampling_score_fn(x, curr_sigma, labels)
                 
-                # Calculate prob_matrix for final denoising step following Denoiser pattern
-                stag_score = graph.staggered_score(score_matrix, sigma)
-                prob_matrix = stag_score * graph.transp_transition(x, sigma)
+                # Calculate prob_matrix following the same pattern as main sampling loop
+                next_sigma = noise(t - dt)[0]
+                dsigma_step = curr_sigma - next_sigma
+                stag_score = graph.staggered_score(score_matrix, dsigma_step)
+                prob_matrix = stag_score * graph.transp_transition(x, dsigma_step)
                 
                 viz_logger.log_step(
                     step=steps,  # Final denoising step
