@@ -152,14 +152,38 @@ class BaseSampler:
             }
             viz_logger.update_noise_schedule_metadata(noise_config)
         
-        # Create PC sampler with visualization support
-        sampling_fn = sampling.get_pc_sampler(
-            graph, noise, (num_samples, sequence_length), 'analytic', steps, 
-            device=self.device, viz_logger=viz_logger
-        )
+        # Process samples in batches like evaluation mode to avoid tensor dimension issues
+        # Use same batch size approach as evaluation
+        batch_size = min(32, num_samples)  # Standard batch size used in evaluation
+        sampled_sequences_list = []
         
-        # Sample sequences
-        sampled_sequences = sampling_fn(model, conditioning_labels.to(self.device))
+        remaining_samples = num_samples
+        label_start_idx = 0
+        
+        while remaining_samples > 0:
+            current_batch_size = min(batch_size, remaining_samples)
+            
+            # Get labels for this batch
+            if conditioning_labels is not None:
+                batch_labels = conditioning_labels[label_start_idx:label_start_idx + current_batch_size]
+            else:
+                batch_labels = None
+            
+            # Create PC sampler for this batch (same pattern as evaluation)
+            sampling_fn = sampling.get_pc_sampler(
+                graph, noise, (current_batch_size, sequence_length), 'analytic', steps, 
+                device=self.device, viz_logger=viz_logger
+            )
+            
+            # Sample this batch
+            batch_sequences = sampling_fn(model, batch_labels.to(self.device) if batch_labels is not None else None)
+            sampled_sequences_list.append(batch_sequences)
+            
+            remaining_samples -= current_batch_size
+            label_start_idx += current_batch_size
+        
+        # Concatenate all batches
+        sampled_sequences = torch.cat(sampled_sequences_list, dim=0)
         
         return sampled_sequences
     

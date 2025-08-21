@@ -224,7 +224,7 @@ class GenerationService:
         
         config = model_data["config"]
         sequence_length = sampler.get_sequence_length(config)
-        steps = request.steps
+        steps = request.steps if request.steps != 249 else sampler.get_sequence_length(config)
         
         # Generate conditioning labels
         conditioning_labels = self._generate_conditioning_labels(request, model_data["device"])
