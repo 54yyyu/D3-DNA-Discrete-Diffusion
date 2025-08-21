@@ -29,8 +29,8 @@ class APIConfig:
             "deepstarr": {
                 # SET THESE TO YOUR ACTUAL FILES
                 "config_file": "model_zoo/deepstarr/configs/transformer.yaml",  # YOUR CONFIG FILE
-                "checkpoint": "ajdjaj.ckpt",  # YOUR MODEL CHECKPOINT
-                "oracle_checkpoint": "your_oracle.ckpt",  # YOUR ORACLE MODEL CHECKPOINT
+                "checkpoint": "experiments/deepstarr/checkpoints/model-epoch=279-val_loss=319.2632.ckpt",  # YOUR MODEL CHECKPOINT
+                "oracle_checkpoint": "model_zoo/deepstarr/oracle_models/oracle_DeepSTARR_DeepSTARR_data.ckpt",  # YOUR ORACLE MODEL CHECKPOINT
                 "data_file": "model_zoo/deepstarr/DeepSTARR_data.h5",  # YOUR DATA FILE
                 
                 "sequence_length": 249,
