@@ -60,22 +60,20 @@ class VisualizationFormatter:
         
         # Add optional metadata arrays
         if hasattr(viz_logger, 'original_samples') and viz_logger.original_samples is not None:
-            # Convert one-hot encoded original samples to integer tokens
+            # Convert channel-first one-hot encoded original samples to integer tokens
             original_samples_tensor = viz_logger.original_samples
             print(f"Original samples tensor shape: {original_samples_tensor.shape}")
-            print(f"Original samples tensor dims: {original_samples_tensor.dim()}")
-            print(f"Sample of original data: {original_samples_tensor[0, :5, :] if original_samples_tensor.dim() == 3 else original_samples_tensor[:5]}")
             
-            if original_samples_tensor.dim() == 3 and original_samples_tensor.shape[-1] == 4:
-                # One-hot encoded: convert to integer tokens
-                print("Converting one-hot encoded to integer tokens")
-                original_samples_tokens = torch.argmax(original_samples_tensor, dim=-1)
+            if original_samples_tensor.dim() == 3 and original_samples_tensor.shape[1] == 4:
+                # Channel-first one-hot encoded: [batch, 4, seq_len] -> [batch, seq_len]
+                print("Converting channel-first one-hot encoded to integer tokens")
+                original_samples_tokens = torch.argmax(original_samples_tensor, dim=1)
                 print(f"Converted tokens shape: {original_samples_tokens.shape}")
                 print(f"Sample converted tokens: {original_samples_tokens[0, :10]}")
                 metadata.original_samples = VisualizationFormatter._tensor_to_list(original_samples_tokens)
             else:
-                # Already integer tokens
-                print("Using original samples as-is")
+                # Already integer tokens or different format
+                print("Using original samples as-is (assuming integer tokens)")
                 metadata.original_samples = VisualizationFormatter._tensor_to_list(original_samples_tensor)
             
         if hasattr(viz_logger, 'ground_truth_labels') and viz_logger.ground_truth_labels is not None:
