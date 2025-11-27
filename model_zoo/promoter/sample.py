@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from omegaconf import OmegaConf
 from typing import Optional
 import numpy as np
+import h5py
 
 # Add project root to Python path for imports
 project_root = Path(__file__).parent.parent.parent
@@ -45,28 +46,42 @@ class PromoterSampler(BaseSampler):
         return 1024  # Promoter default sequence length
     
     def generate_conditioning_labels(self, num_samples: int, config: OmegaConf) -> torch.Tensor:
-        """Generate conditioning labels for Promoter sampling."""
-        # Promoter dataset has expression targets
-        # For sampling, we generate random target expression values
-        # This should match the expected conditioning format for Promoter models
-        
+        """
+        Generate conditioning labels for Promoter sampling.
+
+        Promoter uses per-position regulatory activity labels by default,
+        where each position has a signal_dim-dimensional regulatory signal.
+        For promoter: signal_dim=1 and per-position conditioning is used.
+
+        Args:
+            num_samples: Number of samples to generate labels for
+            config: Configuration object containing dataset and model parameters
+
+        Returns:
+            Conditioning labels tensor
+        """
         seq_length = self.get_sequence_length(config)
-        
-        # Check if the model expects per-position targets or global targets
-        # This may need adjustment based on the specific Promoter model configuration
-        if hasattr(config, 'model') and hasattr(config.model, 'target_dim'):
-            target_dim = config.model.target_dim
+
+        # Get signal_dim from dataset config (dimensionality of regulatory signal per position)
+        if hasattr(config, 'dataset') and hasattr(config.dataset, 'signal_dim'):
+            signal_dim = config.dataset.signal_dim
         else:
-            target_dim = 1  # Default assumption
-        
-        # Generate random expression targets
-        if target_dim == 1:
-            # Global target for the entire sequence
-            labels = torch.randn(num_samples, target_dim, device=self.device) * 2.0
+            signal_dim = 1  # Default for promoter
+
+        # Check if global conditioning is requested (single value for entire sequence)
+        # Otherwise, use per-position conditioning (default for promoter)
+        use_global = getattr(config.model, 'use_global_conditioning', False) if hasattr(config, 'model') else False
+
+        if use_global:
+            # Global conditioning: single regulatory value for entire sequence
+            # TODO: should include a check for the architecture (should have been trained with same shape of labels)
+            # Shape: (num_samples, signal_dim)
+            labels = torch.randn(num_samples, signal_dim, device=self.device) * 2.0
         else:
-            # Per-position targets (less common but possible)
-            labels = torch.randn(num_samples, seq_length, target_dim, device=self.device) * 2.0
-            
+            # Per-position conditioning: regulatory value at each position
+            # Shape: (num_samples, seq_length, signal_dim)
+            labels = torch.randn(num_samples, seq_length, signal_dim, device=self.device) * 2.0
+
         return labels
 
 
@@ -85,6 +100,11 @@ def main():
     # Add Promoter-specific conditioning arguments
     parser.add_argument('--expression_target', type=float, help='Expression target value (if not provided, uses random)')
     parser.add_argument('--unconditional', action='store_true', help='Sample unconditionally (ignoring any labels)')
+    parser.add_argument('--use_test_set', action='store_true', default=False, help='Use test set labels from dataset as conditioning labels')
+    parser.add_argument('--save_elements', type=str, nargs='+', default=None,
+                       choices=['sequence', 'score', 'stag_score', 'prob'],
+                       help='List of elements to save during sampling: sequence, score, stag_score, prob. '
+                            'Each will be saved as (N, L, T, 4) tensor in HDF5 format.')
     args = parser.parse_args()
     
     # Load config if not provided
@@ -104,37 +124,111 @@ def main():
     
     config = OmegaConf.load(args.config)
     sampler = PromoterSampler()
-    
-    # Generate conditioning labels based on arguments
+
+    # Get sequence length
+    seq_length = sampler.get_sequence_length(config)
+
+    # Set default steps to sequence length if not provided
+    steps = args.steps if args.steps is not None else seq_length
+    print(f"Using {steps} sampling steps")
+
+    # Generate conditioning labels for all samples
     conditioning_labels = None
+    num_samples = args.num_samples
+
     if not args.unconditional:
-        if args.expression_target is not None:
-            # User-specified expression target
-            conditioning_labels = torch.tensor([[args.expression_target]], device=sampler.device).expand(args.num_samples, -1)
+        if args.use_test_set:
+            # Use test set labels from dataset
+            if not args.data_path:
+                print("Error: --data_path is required when using --use_test_set")
+                return 1
+
+            # Load test dataset to get labels
+            from model_zoo.promoter.data import PromoterDataset
+            test_dataset = PromoterDataset(args.data_path, split='test')
+            conditioning_labels = test_dataset.y.to(sampler.device)  # Shape: (N, 1024, 1)
+            num_samples = len(test_dataset)
+            print(f"Using test set labels: {num_samples} samples with shape {conditioning_labels.shape}")
+
+        elif args.expression_target is not None:
+            # User-specified expression target - replicate across all positions
+            # Shape: (num_samples, seq_length, 1) for per-position conditioning
+            conditioning_labels = torch.full((num_samples, seq_length, 1), args.expression_target, device=sampler.device)
             print(f"Using specified expression target: {args.expression_target}")
         else:
             # Random expression targets (default behavior)
-            conditioning_labels = sampler.generate_conditioning_labels(args.num_samples, config)
-            print("Using random expression targets")
+            conditioning_labels = sampler.generate_conditioning_labels(num_samples, config)
+            print(f"Using random expression targets with shape {conditioning_labels.shape}")
     else:
         print("Sampling unconditionally (no conditioning labels)")
-    
-    # Set default steps to sequence length if not provided
-    steps = args.steps
-    if steps is None:
-        steps = sampler.get_sequence_length(config)
-        print(f"Using default steps: {steps} (sequence length)")
-    
-    # Run sampling only (no evaluation)
-    results = sampler.sample_and_save(
-        model_path=args.model_path,
+
+    # Use base class batched sampling (handles flash attention memory issues automatically)
+    # Smart defaults: automatically batches with size 256 when num_samples > 512
+    print(f"Loading Promoter {args.architecture} model from {args.checkpoint}")
+    result = sampler.sample_sequences_with_pc_sampler(
+        checkpoint_path=args.checkpoint,
         config=config,
-        num_samples=args.num_samples,
+        num_samples=num_samples,
         steps=steps,
+        architecture=args.architecture,
         conditioning_labels=conditioning_labels,
-        output_path=args.output,
-        format=args.format
+        save_elements_list=args.save_elements
+        # No sampling_batch_size - uses automatic smart defaults from base class
     )
+    
+    # Handle returned result (may be just sequences or (sequences, saved_elements))
+    if isinstance(result, tuple):
+        sequences, saved_elements = result
+    else:
+        sequences = result
+        saved_elements = None
+
+    # Save sequences if output path provided
+    if args.output:
+        sampler.save_sequences(sequences, args.output, args.format, args.sequence_encoding)
+        results = {
+            'num_sequences': len(sequences),
+            'sequence_length': seq_length,
+            'output_file': args.output,
+            'encoding': args.sequence_encoding
+        }
+    else:
+        results = {
+            'num_sequences': len(sequences),
+            'sequence_length': seq_length
+        }
+    
+    # Save elements if requested
+    if saved_elements:
+        # Determine output directory (use same directory as sequence output if provided)
+        if args.output:
+            output_dir = Path(args.output).parent
+            base_name = Path(args.output).stem
+        else:
+            output_dir = Path('.')
+            base_name = 'promoter_samples'
+        
+        # Save all elements as datasets in a single HDF5 file
+        output_file = output_dir / f"{base_name}_elements.h5"
+        
+        print(f"\nSaving sampling elements to {output_file}...")
+        with h5py.File(output_file, 'w') as f:
+            for elem_name, elem_tensor in saved_elements.items():
+                # elem_tensor shape: (N, L, T, 4)
+                f.create_dataset(elem_name, data=elem_tensor.numpy(), compression='gzip')
+                print(f"  Saved dataset '{elem_name}': shape {elem_tensor.shape}")
+            
+            # Save metadata as attributes
+            first_elem = list(saved_elements.values())[0]
+            f.attrs['num_samples'] = first_elem.shape[0]
+            f.attrs['sequence_length'] = first_elem.shape[1]
+            f.attrs['num_timesteps'] = first_elem.shape[2]
+            f.attrs['num_classes'] = first_elem.shape[3]
+            f.attrs['saved_elements'] = list(saved_elements.keys())
+        
+        print(f"  All elements saved to: {output_file}")
+        results['saved_elements_file'] = str(output_file)
+        results['saved_elements'] = list(saved_elements.keys())
     
     # Print results
     print(f"\nPromoter Sampling Results:")

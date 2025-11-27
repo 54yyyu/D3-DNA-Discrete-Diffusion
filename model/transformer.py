@@ -13,7 +13,7 @@ from omegaconf import OmegaConf, DictConfig
 import math
 
 from einops import rearrange
-from flash_attn.flash_attn_interface import flash_attn_varlen_qkvpacked_func
+from flash_attn.flash_attn_interface import flash_attn_varlen_qkvpacked_func, flash_attn_qkvpacked_func
 
 from . import rotary
 from .layers import (
@@ -81,26 +81,27 @@ class DDiTBlock(nn.Module):
 
         qkv = self.attn_qkv(x)
         qkv = rearrange(qkv, 'b s (three h d) -> b s three h d', three=3, h=self.n_heads)
-        
+
         # Apply rotary position embedding
         with torch.amp.autocast('cuda', enabled=False):
             cos, sin = rotary_cos_sin
             qkv = rotary.apply_rotary_pos_emb(qkv, cos.to(qkv.dtype), sin.to(qkv.dtype))
-        
-        qkv = rearrange(qkv, 'b s ... -> (b s) ...')
-        
-        # Prepare sequence lengths for flash attention
+
+        # Ensure QKV is contiguous for flash attention (critical for H100 GPUs)
+        qkv = qkv.contiguous()
+
+        # Flash attention - use appropriate version based on sequence length variability
         if seqlens is None:
-            cu_seqlens = torch.arange(
-                0, (batch_size + 1) * seq_len, step=seq_len,
-                dtype=torch.int32, device=x.device
-            )
+            # Fixed-length sequences: use standard flash attention
+            # qkv shape: (batch, seq_len, 3, num_heads, head_dim)
+            x = flash_attn_qkvpacked_func(qkv, dropout_p=0., causal=False)
+            x = rearrange(x, 'b s h d -> b s (h d)')
         else:
+            # Variable-length sequences: use varlen flash attention
+            qkv = rearrange(qkv, 'b s ... -> (b s) ...')
             cu_seqlens = seqlens.cumsum(-1)
-            
-        # Flash attention
-        x = flash_attn_varlen_qkvpacked_func(qkv, cu_seqlens, seq_len, 0., causal=False)
-        x = rearrange(x, '(b s) h d -> b s (h d)', b=batch_size)
+            x = flash_attn_varlen_qkvpacked_func(qkv, cu_seqlens, seq_len, 0., causal=False)
+            x = rearrange(x, '(b s) h d -> b s (h d)', b=batch_size)
 
         # Apply attention output projection with gating
         x = bias_dropout_scale_fn(self.attn_out(x), None, gate_msa, x_skip, self.dropout)
@@ -130,7 +131,15 @@ class EmbeddingLayer(nn.Module):
         vocab_embed = self.embedding[x] #return only this if label embedding is used
         if y is not None:
             signal_embed = self.signal_embedding(y.to(torch.float32))
-            return torch.add(vocab_embed, signal_embed[:, None, :]) #[:, None, :] extra for deepstarr
+            # Handle both global conditioning (2D labels) and per-position conditioning (3D labels)
+            if signal_embed.dim() == 2:
+                # Global conditioning: (batch, dim) -> (batch, 1, dim) -> broadcast to (batch, seq_len, dim)
+                result = torch.add(vocab_embed, signal_embed[:, None, :])
+            else:
+                # Per-position conditioning: (batch, seq_len, dim) -> add directly
+                result = torch.add(vocab_embed, signal_embed)
+            # Ensure contiguous memory layout for flash attention
+            return result.contiguous()
         else:
             # For unconditional generation, return only vocab embedding
             return vocab_embed
